@@ -18,14 +18,8 @@ AUTOTUNE = tf.data.AUTOTUNE
 # STEP 2: FUNCTION TO EXTRACT LABELS FROM FILENAMES
 # =============================================================================
 def extract_label_from_filename(filename):
-    """Extract currency label from filename like 'EUR_5_2013_2.png' -> 'EUR_5'"""
-    # Remove file extension
-    name = os.path.splitext(filename)[0]
-    # Split by underscore and take first two parts (currency and denomination)
-    parts = name.split('_')
-    if len(parts) >= 2:
-        return f"{parts[0]}_{parts[1]}"
-    return name
+    # Use the full name without extension: 'EUR_5_2013_2'
+    return os.path.splitext(filename)[0]
 
 
 # =============================================================================
