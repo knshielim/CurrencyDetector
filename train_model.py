@@ -1,193 +1,232 @@
-import tensorflow as tf
-import numpy as np
+# =============================================================================
+# STEP 1: IMPORT LIBRARIES & DEFINE SETTINGS
+# =============================================================================
 import os
+import pandas as pd
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from sklearn.preprocessing import LabelEncoder
+import numpy as np
 
-# --- 1. Configuration & Placeholders ---
-# These are the parameters you will need to set based on your final dataset.
-# For now, we'll use some dummy values.
-
-# Image dimensions
-IMG_WIDTH = 224
-IMG_HEIGHT = 224
-IMG_CHANNELS = 3
-IMG_SHAPE = (IMG_HEIGHT, IMG_WIDTH, IMG_CHANNELS)
-
-# Number of output classes for each category
-# TODO: Update these numbers when your dataset is finalized.
-NUM_COUNTRIES = 5  # Example: USD, MYR, EUR, SGD, IDR
-NUM_NOMINALS = 6   # Example: 1, 5, 10, 20, 50, 100
-NUM_YEARS = 4      # Example: 2009, 2012, 2013, 2018
-
-# Training parameters
+# Set image size and batch size
+IMG_SIZE = (180, 180)
 BATCH_SIZE = 32
-EPOCHS = 10 # Start with a small number for testing, increase for real training (e.g., 30-50)
+AUTOTUNE = tf.data.AUTOTUNE
 
 
-# --- 2. Dummy Data Generation ---
-# This section is a PLACEHOLDER for your real data pipeline.
-# Member 1 will provide the 'dataset_split/' folder.
-# Once you have that, you can replace this entire section with:
-# `tf.keras.utils.image_dataset_from_directory()`
-
-def generate_dummy_data(num_samples, num_countries, num_nominals, num_years):
-    """
-    Generates a dummy dataset of random images and corresponding labels.
-    This function simulates the data loading process.
-
-    Args:
-        num_samples (int): The total number of dummy samples to generate.
-        num_countries (int): The number of country classes.
-        num_nominals (int): The number of nominal value classes.
-        num_years (int): The number of year/version classes.
-
-    Returns:
-        tf.data.Dataset: A TensorFlow dataset ready for training.
-    """
-    print(f"Generating {num_samples} dummy samples...")
-    # Generate random "images" (random pixel values)
-    dummy_images = np.random.rand(num_samples, IMG_HEIGHT, IMG_WIDTH, IMG_CHANNELS).astype(np.float32)
-
-    # Generate random integer labels for each of the three outputs
-    dummy_country_labels = np.random.randint(0, num_countries, size=num_samples)
-    dummy_nominal_labels = np.random.randint(0, num_nominals, size=num_samples)
-    dummy_year_labels = np.random.randint(0, num_years, size=num_samples)
-
-    # The model expects a dictionary of labels, where keys match the output layer names
-    dummy_labels = {
-        "country_output": dummy_country_labels,
-        "nominal_output": dummy_nominal_labels,
-        "year_output": dummy_year_labels
-    }
-
-    # Create a tf.data.Dataset object
-    dataset = tf.data.Dataset.from_tensor_slices((dummy_images, dummy_labels))
-    dataset = dataset.shuffle(buffer_size=num_samples).batch(BATCH_SIZE)
-    print("Dummy data generation complete.")
-    return dataset
-
-# Generate the datasets
-# In a real scenario, you'd have separate folders for train, val, and test
-train_dataset = generate_dummy_data(1000, NUM_COUNTRIES, NUM_NOMINALS, NUM_YEARS)
-val_dataset = generate_dummy_data(200, NUM_COUNTRIES, NUM_NOMINALS, NUM_YEARS)
-test_dataset = generate_dummy_data(200, NUM_COUNTRIES, NUM_NOMINALS, NUM_YEARS)
+# =============================================================================
+# STEP 2: FUNCTION TO EXTRACT LABELS FROM FILENAMES
+# =============================================================================
+def extract_label_from_filename(filename):
+    """Extract currency label from filename like 'EUR_5_2013_2.png' -> 'EUR_5'"""
+    # Remove file extension
+    name = os.path.splitext(filename)[0]
+    # Split by underscore and take first two parts (currency and denomination)
+    parts = name.split('_')
+    if len(parts) >= 2:
+        return f"{parts[0]}_{parts[1]}"
+    return name
 
 
-# --- 3. Model Design (Transfer Learning) ---
-def build_model(num_countries, num_nominals, num_years):
-    """
-    Builds a multi-output currency classification model using MobileNetV2.
+# =============================================================================
+# STEP 3: FUNCTION TO LOAD DATASET FROM IMAGE FOLDER
+# =============================================================================
+def load_dataset_from_images(images_dir):
+    """Load dataset from a folder of images where labels are in filenames"""
 
-    Args:
-        num_countries (int): The number of country classes.
-        num_nominals (int): The number of nominal value classes.
-        num_years (int): The number of year/version classes.
+    # Get all image files
+    image_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.gif')
+    image_files = []
+    labels = []
 
-    Returns:
-        tf.keras.Model: The compiled Keras model.
-    """
-    print("Building model...")
-    # Load the base model (MobileNetV2) pre-trained on ImageNet
-    # We exclude the top classification layer (`include_top=False`)
-    # to add our own custom output layers.
-    base_model = tf.keras.applications.MobileNetV2(
-        input_shape=IMG_SHAPE,
-        include_top=False,
-        weights='imagenet'
-    )
+    for filename in os.listdir(images_dir):
+        if filename.lower().endswith(image_extensions):
+            image_files.append(os.path.join(images_dir, filename))
+            label = extract_label_from_filename(filename)
+            labels.append(label)
 
-    # Freeze the layers of the base model so we only train our new layers
-    base_model.trainable = False
+    print(f"Found {len(image_files)} images")
 
-    # Get the output of the base model
-    base_model_output = base_model.output
+    # Convert labels to integers
+    label_encoder = LabelEncoder()
+    encoded_labels = label_encoder.fit_transform(labels)
 
-    # Add a pooling layer to reduce the spatial dimensions
-    x = tf.keras.layers.GlobalAveragePooling2D()(base_model_output)
-    x = tf.keras.layers.Dropout(0.3)(x) # Add dropout for regularization
+    print(f"Found {len(label_encoder.classes_)} classes: {list(label_encoder.classes_)}")
 
-    # --- Create the three separate output layers ("heads") ---
-    # Each output is a Dense layer with a softmax activation function.
-    # The name of each layer is important, as it will be used to match the labels.
-    output_country = tf.keras.layers.Dense(num_countries, activation='softmax', name='country_output')(x)
-    output_nominal = tf.keras.layers.Dense(num_nominals, activation='softmax', name='nominal_output')(x)
-    output_year = tf.keras.layers.Dense(num_years, activation='softmax', name='year_output')(x)
+    # Image preprocessing function
+    def process_image(image_path, label):
+        image = tf.io.read_file(image_path)
+        # Try to decode as different formats
+        try:
+            image = tf.image.decode_png(image, channels=3)
+        except:
+            try:
+                image = tf.image.decode_jpeg(image, channels=3)
+            except:
+                image = tf.image.decode_image(image, channels=3)
 
-    # Create the final model with one input and three outputs
-    model = tf.keras.Model(
-        inputs=base_model.input,
-        outputs=[output_country, output_nominal, output_year]
-    )
-    print("Model built successfully.")
-    return model
+        image = tf.image.resize(image, IMG_SIZE)
+        image = tf.cast(image, tf.float32) / 255.0
+        return image, label
 
-# Instantiate the model
-model = build_model(NUM_COUNTRIES, NUM_NOMINALS, NUM_YEARS)
+    # Create TensorFlow dataset
+    dataset = tf.data.Dataset.from_tensor_slices((image_files, encoded_labels))
+    dataset = dataset.map(process_image, num_parallel_calls=AUTOTUNE)
+    dataset = dataset.batch(BATCH_SIZE).cache().prefetch(AUTOTUNE)
 
-# Display the model's architecture
-model.summary()
+    return dataset, label_encoder
 
 
-# --- 4. Compile the Model ---
-print("Compiling model...")
-# When compiling a multi-output model, you MUST specify metrics for each output.
-# Using a dictionary is the clearest way. The keys must match the output layer names.
+# =============================================================================
+# STEP 4: LOAD AND SPLIT DATASETS
+# =============================================================================
+print("📥 Loading and splitting data...")
+
+# Check which folders exist
+train_exists = os.path.exists('dataset_split/train/images')
+val_exists = os.path.exists('dataset_split/val/images')
+test_exists = os.path.exists('dataset_split/test/images')
+
+if train_exists and val_exists:
+    # Load from separate train/val folders
+    print("Found separate train and validation folders")
+    train_ds, label_encoder = load_dataset_from_images('dataset_split/train/images')
+    val_ds, val_label_encoder = load_dataset_from_images('dataset_split/val/images')
+
+elif test_exists:
+    # Load from test folder and split
+    print("Found test folder - will split into train/validation")
+    all_ds, label_encoder = load_dataset_from_images('dataset_split/test/images')
+
+    # Split dataset (80% train, 20% validation)
+    total_batches = tf.data.experimental.cardinality(all_ds).numpy()
+    train_size = int(0.8 * total_batches)
+
+    train_ds = all_ds.take(train_size)
+    val_ds = all_ds.skip(train_size)
+
+    print(f"Split into {train_size} training batches and {total_batches - train_size} validation batches")
+
+else:
+    raise ValueError("No dataset folder found! Please check your folder structure.")
+
+# Make sure both datasets have the same classes
+num_classes = len(label_encoder.classes_)
+print(f"📊 Training with {num_classes} currency classes")
+
+# =============================================================================
+# STEP 5: BUILD MODEL
+# =============================================================================
+print("🧠 Building model...")
+
+model = models.Sequential([
+    layers.InputLayer(input_shape=(*IMG_SIZE, 3)),
+
+    # Data augmentation (optional, helps with overfitting)
+    layers.RandomFlip("horizontal"),
+    layers.RandomRotation(0.1),
+    layers.RandomZoom(0.1),
+
+    # First convolutional block
+    layers.Conv2D(32, 3, activation='relu'),
+    layers.MaxPooling2D(),
+
+    # Second convolutional block
+    layers.Conv2D(64, 3, activation='relu'),
+    layers.MaxPooling2D(),
+
+    # Third convolutional block
+    layers.Conv2D(128, 3, activation='relu'),
+    layers.MaxPooling2D(),
+
+    # Fourth convolutional block
+    layers.Conv2D(256, 3, activation='relu'),
+    layers.MaxPooling2D(),
+
+    # Flatten and dense layers
+    layers.GlobalAveragePooling2D(),  # Better than Flatten for this case
+    layers.Dropout(0.5),
+    layers.Dense(512, activation='relu'),
+    layers.Dropout(0.3),
+    layers.Dense(num_classes, activation='softmax')
+])
+
+# =============================================================================
+# STEP 6: COMPILE MODEL
+# =============================================================================
 model.compile(
     optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-    loss={
-        'country_output': 'sparse_categorical_crossentropy',
-        'nominal_output': 'sparse_categorical_crossentropy',
-        'year_output': 'sparse_categorical_crossentropy'
-    },
-    metrics={
-        'country_output': 'accuracy',
-        'nominal_output': 'accuracy',
-        'year_output': 'accuracy'
-    }
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
 )
-print("Model compiled.")
 
+# Print model summary
+print("📋 Model architecture:")
+model.summary()
 
-# --- 5. Train the Model ---
-# TODO: Add callbacks for more robust training on the real dataset.
-# Example:
-# callbacks = [
-#     tf.keras.callbacks.ModelCheckpoint("currency_classifier.h5", save_best_only=True),
-#     tf.keras.callbacks.EarlyStopping(patience=5, restore_best_weights=True)
-# ]
-print("Starting model training...")
+# =============================================================================
+# STEP 7: TRAIN MODEL
+# =============================================================================
+print("🚀 Starting training...")
+
+# Add callbacks for better training
+callbacks = [
+    tf.keras.callbacks.EarlyStopping(
+        monitor='val_loss',
+        patience=5,
+        restore_best_weights=True,
+        verbose=1
+    ),
+    tf.keras.callbacks.ReduceLROnPlateau(
+        monitor='val_loss',
+        factor=0.3,
+        patience=3,
+        min_lr=1e-7,
+        verbose=1
+    ),
+    tf.keras.callbacks.ModelCheckpoint(
+        'best_model.keras',
+        monitor='val_accuracy',
+        save_best_only=True,
+        verbose=1
+    )
+]
+
 history = model.fit(
-    train_dataset,
-    epochs=EPOCHS,
-    validation_data=val_dataset
-    # callbacks=callbacks # Uncomment when using real data
+    train_ds,
+    validation_data=val_ds,
+    epochs=30,
+    callbacks=callbacks,
+    verbose=1
 )
-print("Training complete.")
 
+# =============================================================================
+# STEP 8: SAVE MODEL AND METADATA
+# =============================================================================
+model.save('currency_classifier_model.keras')
+print("✅ Model saved as 'currency_classifier_model.keras'")
 
-# --- 6. Evaluate the Model ---
-print("Evaluating model on the test set...")
-# The evaluation will return the total loss, followed by the loss and accuracy
-# for each of the three outputs, in the order they were defined in the compile() call.
-results = model.evaluate(test_dataset)
+# Save class names and label encoder for later use
+import pickle
 
-# Print the results in a readable format
-print("\n--- Evaluation Results ---")
-print(f"Total Loss: {results[0]:.4f}")
-print(f"Country Loss: {results[1]:.4f}, Country Accuracy: {results[4]:.4f}")
-print(f"Nominal Loss: {results[2]:.4f}, Nominal Accuracy: {results[5]:.4f}")
-print(f"Year Loss: {results[3]:.4f}, Year Accuracy: {results[6]:.4f}")
-print("--------------------------\n")
+with open('class_names.pkl', 'wb') as f:
+    pickle.dump(label_encoder.classes_, f)
 
+with open('label_encoder.pkl', 'wb') as f:
+    pickle.dump(label_encoder, f)
 
-# --- 7. Save the Model ---
-# This saves the entire model (architecture, weights, optimizer state)
-# into a single HDF5 file.
-MODEL_SAVE_PATH = "currency_classifier.h5"
-print(f"Saving trained model to {MODEL_SAVE_PATH}...")
-model.save(MODEL_SAVE_PATH)
-print("Model saved successfully.")
+print("✅ Class names and label encoder saved")
 
-# To load the model later for predictions:
-# loaded_model = tf.keras.models.load_model(MODEL_SAVE_PATH)
-# print("Model loaded successfully for prediction.")
+# =============================================================================
+# STEP 9: DISPLAY TRAINING RESULTS
+# =============================================================================
+print("\n📈 Training completed!")
+final_train_acc = history.history['accuracy'][-1]
+final_val_acc = history.history['val_accuracy'][-1]
+print(f"Final training accuracy: {final_train_acc:.4f}")
+print(f"Final validation accuracy: {final_val_acc:.4f}")
 
+# Show all detected classes
+print(f"\n🏷️  Detected currency classes:")
+for i, class_name in enumerate(label_encoder.classes_):
+    print(f"  {i}: {class_name}")
