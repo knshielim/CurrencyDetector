@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras import layers, models
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-
 # =============================================================================
 # STEP 2 - Setup Paths and Constants
 # =============================================================================
@@ -38,6 +37,10 @@ train_generator = train_datagen.flow_from_directory(
     batch_size=batch_size,
     class_mode='categorical'
 )
+
+import pickle
+with open("class_names.pkl", "wb") as f:
+    pickle.dump(list(train_generator.class_indices.keys()), f)
 
 validation_generator = val_datagen.flow_from_directory(
     validation_dir,
@@ -69,7 +72,6 @@ model.compile(
     loss='categorical_crossentropy',
     metrics=['accuracy']
 )
-
 # =============================================================================
 # STEP 6 - Train the Model
 # =============================================================================

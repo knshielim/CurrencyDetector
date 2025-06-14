@@ -37,14 +37,13 @@ if os.path.exists(nested_dataset):
 macosx_folder = os.path.join(EXTRACT_DIR, '__MACOSX')
 if os.path.exists(macosx_folder):
     shutil.rmtree(macosx_folder)
-    print("🗑️ Removed __MACOSX folder.")
+    print("🗑 Removed __MACOSX folder.")
 
 # =============================================================================
 # STEP 3: SPLIT INTO TRAIN/VALIDATION
 # =============================================================================
 os.makedirs(TRAIN_DIR, exist_ok=True)
 os.makedirs(VAL_DIR, exist_ok=True)
-
 print("\n🔍 Scanning for class folders...\n")
 class_folders = [f for f in os.listdir(EXTRACT_DIR)
                  if os.path.isdir(os.path.join(EXTRACT_DIR, f)) and f not in ['train', 'validation']]
@@ -55,7 +54,7 @@ for class_name in class_folders:
               if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
 
     if not images:
-        print(f"⚠️ No images in '{class_name}', skipping...\n")
+        print(f"⚠ No images in '{class_name}', skipping...\n")
         continue
 
     random.shuffle(images)
@@ -76,4 +75,4 @@ for class_name in class_folders:
     print(f"✅ {len(train_images)} images → train/{class_name}")
     print(f"✅ {len(val_images)} images → validation/{class_name}\n")
 
-print("🎉 All done! Dataset is split into 'train/' and 'validation/' folders.")
+print("🎉 All done! Dataset is split into 'train/' and 'validation/'folders.")
