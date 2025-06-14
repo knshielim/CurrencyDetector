@@ -46,7 +46,7 @@ def main():
 
     train_set.dataset.transform = train_transform  # Apply training transforms
     val_set.dataset.transform = val_transform  # Apply validation transforms
-    test_set.dataset.transform = val_transform  # Apply validation transforms (same as val)
+    test_set.dataset.transform = val_transform  # Apply validation transforms (same as validation)
 
     # Creating DataLoaders
     train_loader = DataLoader(train_set, batch_size=32, shuffle=True, num_workers=2)
