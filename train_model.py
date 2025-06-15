@@ -1,9 +1,9 @@
 # =============================================================================
-# MAXIMUM ACCURACY CURRENCY CLASSIFIER - TRAINING SCRIPT
+# IMPORT LIBRARIES
 # =============================================================================
 import os
 import numpy as np
-import matplotlib.pyplot as plt
+import pickle
 import tensorflow as tf
 from tensorflow.keras import layers, models
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
@@ -13,117 +13,105 @@ from tensorflow.keras.losses import CategoricalCrossentropy
 from tensorflow.keras.optimizers.schedules import CosineDecay
 from tensorflow.keras.applications import EfficientNetB2
 from sklearn.utils.class_weight import compute_class_weight
-import pickle
-from tqdm import tqdm
 
 # =============================================================================
-# CONFIGURATION AND ENVIRONMENT SETUP
+# CONFIGURATION
 # =============================================================================
 tf.random.set_seed(42)
 np.random.seed(42)
 
-# Enable memory growth for GPU
+# Enable GPU memory growth
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
     try:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-        print(f"Running on {len(gpus)} GPU(s).")
+        print(f"✅ {len(gpus)} GPU(s) configured.")
     except RuntimeError as e:
         print(e)
 
-# Set dataset paths
+# Paths
 base_dir = 'dataset'
 train_dir = os.path.join(base_dir, 'train')
-validation_dir = os.path.join(base_dir, 'validation')
+val_dir = os.path.join(base_dir, 'validation')
 
-# Image and batch parameters
+# Parameters
 IMG_SIZE = 260
-img_height, img_width = IMG_SIZE, IMG_SIZE
-batch_size = 16
+BATCH_SIZE = 16
+NUM_CLASSES = len(os.listdir(train_dir))
+CLASS_NAMES = sorted(os.listdir(train_dir))
 
-# Detect number of classes
-num_classes = len(os.listdir(train_dir))
-print(f"Number of classes detected: {num_classes}")
-print(f"Classes: {sorted(os.listdir(train_dir))}")
+print(f"Classes Detected: {CLASS_NAMES}")
+
+# Save class names
+with open("class_names.pkl", "wb") as f:
+    pickle.dump(CLASS_NAMES, f)
 
 # =============================================================================
-# DATA GENERATORS
+# DATA AUGMENTATION
 # =============================================================================
 train_datagen = ImageDataGenerator(
     rescale=1. / 255,
-    rotation_range=30,
-    width_shift_range=0.2,
-    height_shift_range=0.2,
-    shear_range=0.2,
-    zoom_range=0.2,
+    rotation_range=25,
+    width_shift_range=0.15,
+    height_shift_range=0.15,
+    zoom_range=0.15,
+    shear_range=0.1,
     horizontal_flip=True,
-    fill_mode='reflect',
-    brightness_range=[0.7, 1.3]
+    brightness_range=(0.7, 1.3),
+    fill_mode='nearest'
 )
 
 val_datagen = ImageDataGenerator(rescale=1. / 255)
 
 train_generator = train_datagen.flow_from_directory(
     train_dir,
-    target_size=(img_height, img_width),
-    batch_size=batch_size,
+    target_size=(IMG_SIZE, IMG_SIZE),
+    batch_size=BATCH_SIZE,
     class_mode='categorical',
-    shuffle=True,
-    seed=42
+    shuffle=True
 )
 
-validation_generator = val_datagen.flow_from_directory(
-    validation_dir,
-    target_size=(img_height, img_width),
-    batch_size=batch_size,
+val_generator = val_datagen.flow_from_directory(
+    val_dir,
+    target_size=(IMG_SIZE, IMG_SIZE),
+    batch_size=BATCH_SIZE,
     class_mode='categorical',
-    shuffle=False,
-    seed=42
+    shuffle=False
 )
 
-# Save class label mapping
-with open("class_names.pkl", "wb") as f:
-    pickle.dump(list(train_generator.class_indices.keys()), f)
-print(f"Class mapping saved: {train_generator.class_indices}")
-
 # =============================================================================
-# CLASS WEIGHT COMPUTATION
+# COMPUTE CLASS WEIGHTS
 # =============================================================================
-class_labels = train_generator.classes
-class_weight_values = compute_class_weight(
+class_weights = compute_class_weight(
     class_weight='balanced',
-    classes=np.unique(class_labels),
-    y=class_labels
+    classes=np.unique(train_generator.classes),
+    y=train_generator.classes
 )
-class_weights = dict(zip(np.unique(class_labels), class_weight_values))
-print(f"Calculated class weights: {class_weights}")
+class_weights = dict(enumerate(class_weights))
+print(f"Class Weights: {class_weights}")
 
 # =============================================================================
 # MODEL DEFINITION
 # =============================================================================
-def create_max_accuracy_model(num_classes, img_height, img_width):
-    base_model = EfficientNetB2(
-        weights='imagenet',
-        include_top=False,
-        input_shape=(img_height, img_width, 3),
-        pooling='avg'
-    )
-    base_model.trainable = False
+def build_currency_model(input_shape=(IMG_SIZE, IMG_SIZE, 3), num_classes=NUM_CLASSES):
+    base_model = EfficientNetB2(weights='imagenet', include_top=False, input_shape=input_shape)
+    base_model.trainable = False  # Freeze base model for Phase 1
 
-    inputs = tf.keras.Input(shape=(img_height, img_width, 3))
+    inputs = tf.keras.Input(shape=input_shape)
     x = base_model(inputs, training=False)
+    x = layers.GlobalAveragePooling2D()(x)
     x = layers.BatchNormalization()(x)
     x = layers.Dropout(0.4)(x)
     outputs = layers.Dense(num_classes, activation='softmax')(x)
-    model = models.Model(inputs, outputs)
 
+    model = models.Model(inputs, outputs)
     return model
 
-model = create_max_accuracy_model(num_classes, img_height, img_width)
+model = build_currency_model()
 
 # =============================================================================
-# COMPILE MODEL - PHASE 1
+# PHASE 1: TRAIN HEAD ONLY
 # =============================================================================
 model.compile(
     optimizer=AdamW(learning_rate=1e-3, weight_decay=1e-4),
@@ -131,140 +119,61 @@ model.compile(
     metrics=['accuracy']
 )
 
-model.summary()
-
-# =============================================================================
-# CALLBACKS
-# =============================================================================
-checkpoint_filepath = 'best_currency_model.h5'
-
 callbacks = [
-    EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True, verbose=1),
-    ModelCheckpoint(filepath=checkpoint_filepath, monitor='val_accuracy', save_best_only=True, save_weights_only=False, verbose=1, mode='max')
+    EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True),
+    ModelCheckpoint("best_currency_model.h5", monitor='val_accuracy', save_best_only=True)
 ]
 
-# =============================================================================
-# TRAINING - PHASE 1 (Train Classification Head)
-# =============================================================================
-print("\n" + "=" * 60)
-print("PHASE 1: Training the new classification head")
-print("=" * 60)
-
-history_head = model.fit(
+print("\n📘 Starting Phase 1: Training classifier head")
+history1 = model.fit(
     train_generator,
-    validation_data=validation_generator,
+    validation_data=val_generator,
     epochs=50,
-    callbacks=callbacks,
     class_weight=class_weights,
-    verbose=1
+    callbacks=callbacks
 )
 
 # =============================================================================
-# FINE-TUNING - PHASE 2
+# PHASE 2: FINE-TUNE FULL MODEL
 # =============================================================================
-print("\n" + "=" * 60)
-print("PHASE 2: Fine-tuning the full model with Cosine Decay LR")
-print("=" * 60)
+print("\n📘 Starting Phase 2: Fine-tuning full model")
 
-model.layers[1].trainable = True  # Unfreeze base model
+model.trainable = True  # Unfreeze entire model
 
-total_steps = (train_generator.samples // batch_size) * 100
-cosine_decay_schedule = CosineDecay(
+cosine_schedule = CosineDecay(
     initial_learning_rate=1e-5,
-    decay_steps=total_steps,
+    decay_steps=(train_generator.samples // BATCH_SIZE) * 50,
     alpha=0.0
 )
 
 model.compile(
-    optimizer=AdamW(learning_rate=cosine_decay_schedule, weight_decay=1e-5),
+    optimizer=AdamW(learning_rate=cosine_schedule, weight_decay=1e-5),
     loss=CategoricalCrossentropy(label_smoothing=0.1),
     metrics=['accuracy']
 )
 
-callbacks_finetune = [
-    EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=1),
-    ModelCheckpoint(filepath=checkpoint_filepath, monitor='val_accuracy', save_best_only=True, verbose=1, mode='max')
+callbacks_ft = [
+    EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
+    ModelCheckpoint("best_currency_model.h5", monitor='val_accuracy', save_best_only=True)
 ]
 
-initial_epoch = len(history_head.history['loss'])
-history_finetune = model.fit(
+history2 = model.fit(
     train_generator,
-    validation_data=validation_generator,
-    epochs=initial_epoch + 100,
-    callbacks=callbacks_finetune,
+    validation_data=val_generator,
+    epochs=100,
+    initial_epoch=len(history1.history['loss']),
     class_weight=class_weights,
-    verbose=1,
-    initial_epoch=initial_epoch
+    callbacks=callbacks_ft
 )
 
 # =============================================================================
 # SAVE FINAL MODEL
 # =============================================================================
-print("\nLoading best model from checkpoint for final evaluation...")
-best_model = tf.keras.models.load_model(checkpoint_filepath)
-best_model.save('currency_classifier_final_model.h5')
-print("Final best model saved as 'currency_classifier_final_model.h5'")
+model.save("currency_classifier_final_model.h5")
+print("✅ Final model saved as currency_classifier_final_model.h5")
 
 # =============================================================================
-# STANDARD VALIDATION EVALUATION
+# FINAL EVALUATION
 # =============================================================================
-print("\n" + "=" * 50)
-print("FINAL EVALUATION ON VALIDATION SET (Standard)")
-print("=" * 50)
-standard_results = best_model.evaluate(validation_generator, verbose=1)
-for name, value in zip(best_model.metrics_names, standard_results):
-    print(f"{name.replace('_', ' ').capitalize():<20}: {value:.4f}")
-
-# =============================================================================
-# TEST-TIME AUGMENTATION (TTA) EVALUATION
-# =============================================================================
-print("\n" + "=" * 50)
-print("PERFORMING EVALUATION WITH TEST-TIME AUGMENTATION (TTA)")
-print("=" * 50)
-
-tta_steps = 5
-tta_datagen = ImageDataGenerator(
-    rescale=1. / 255,
-    rotation_range=15,
-    width_shift_range=0.1,
-    height_shift_range=0.1,
-    shear_range=0.1,
-    zoom_range=0.1,
-    horizontal_flip=True,
-    fill_mode='reflect'
-)
-
-validation_generator.reset()
-predictions_tta = []
-
-for i in tqdm(range(len(validation_generator)), desc="TTA Progress"):
-    images, labels = validation_generator[i]
-    batch_preds = []
-    for j in range(images.shape[0]):
-        img = images[j]
-        tta_images = np.array([tta_datagen.random_transform(img) for _ in range(tta_steps)])
-        preds = best_model.predict(tta_images, verbose=0)
-        avg_preds = np.mean(preds, axis=0)
-        batch_preds.append(avg_preds)
-    predictions_tta.extend(batch_preds)
-
-predicted_classes_tta = np.argmax(np.array(predictions_tta), axis=1)
-true_classes = validation_generator.classes
-tta_accuracy = np.mean(predicted_classes_tta == true_classes)
-
-print(f"\nStandard Validation Accuracy: {standard_results[1]:.4f}")
-print(f"TTA Enhanced Accuracy:      {tta_accuracy:.4f}  <-- Accuracy Boost!")
-
-# =============================================================================
-# FINAL TRAINING SUMMARY
-# =============================================================================
-print("\n" + "=" * 70)
-print("TRAINING COMPLETED SUCCESSFULLY!")
-print("=" * 70)
-print(f"✅ Final best model saved as: currency_classifier_final_model.h5")
-print(f"✅ Class names saved as: class_names.pkl")
-print(f"✅ Model architecture used: Transfer Learning (EfficientNetB2)")
-print(f"✅ Final Standard Accuracy: {standard_results[1]:.4f}")
-print(f"✅ Final TTA Accuracy: {tta_accuracy:.4f}")
-print("=" * 70)
-print("\n🎉 Your maximum accuracy currency classifier is ready!")
+val_loss, val_acc = model.evaluate(val_generator)
+print(f"📊 Final Validation Accuracy: {val_acc:.4f}")

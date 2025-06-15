@@ -19,9 +19,9 @@ def auto_crop(image_path):
     else:
         return Image.open(image_path).convert("RGB")
 
-def normalize_image(image_path, size=(180, 180), grayscale=False):
+def normalize_image(image_path, size=(260, 260), grayscale=False):
     """
-    Normalize gambar dengan auto-crop untuk CNN input.
+    Normalize gambar dengan auto-crop untuk CNN input (260x260).
     """
     try:
         img = auto_crop(image_path)
