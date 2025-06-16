@@ -1,42 +1,50 @@
-import os  # To handle file path
-from PIL import Image  # To open image files
-from torch.utils.data import Dataset  # Base class for PyTorch datasets
-from sklearn.preprocessing import LabelEncoder  # For encoding labels into numbers
+import tensorflow as tf
 
-# Custom dataset class for loading banknote images
-class BanknoteDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
-        self.root_dir = root_dir  # Root directory to the class folder
-        self.transform = transform  # Image transformations for augmentation and transformation
+# Configuration
+dataset_path = "dataset"
+img_height = 224
+img_width = 224
+batch_size = 32
+seed = 123  # For reproducibility
 
-        self.image_paths = []  # List to store paths to all images
-        self.labels = []  # Corresponding labels (folder names)
+# Load training dataset
+train_ds = tf.keras.utils.image_dataset_from_directory(
+    dataset_path,
+    validation_split=0.3,
+    subset="training",
+    seed=seed,
+    image_size=(img_height, img_width),
+    batch_size=batch_size
+)
 
-        # Get sorted list of class names excluding hidden one
-        self.class_names = [f for f in sorted(os.listdir(root_dir)) if not f.startswith('.')]
+# Load validation dataset
+val_ds = tf.keras.utils.image_dataset_from_directory(
+    dataset_path,
+    validation_split=0.3,
+    subset="validation",
+    seed=seed,
+    image_size=(img_height, img_width),
+    batch_size=batch_size
+)
 
-        # Encoding labels into numerical value
-        self.label_encoder = LabelEncoder()
-        self.label_encoder.fit(self.class_names)
+# Class names
+class_names = train_ds.class_names
+print("Class names:", class_names)
 
-        # Loop over each class folder
-        for folder in self.class_names:
-            folder_path = os.path.join(root_dir, folder)  # Full path to folder
-            if os.path.isdir(folder_path):  # Ensure it's a directory
-                for file in os.listdir(folder_path):  # Loop through files in the folder
-                    if file.lower().endswith(('.jpg', '.jpeg', '.png')) and not file.startswith('.'):
-                        self.image_paths.append(os.path.join(folder_path, file))  # Save full image path
-                        self.labels.append(folder)  # Save label as folder name
+# Data augmentation 
+data_augmentation = tf.keras.Sequential([
+    tf.keras.layers.RandomFlip("horizontal"),
+    tf.keras.layers.RandomRotation(0.1),
+    tf.keras.layers.RandomZoom(0.1),
+    tf.keras.layers.RandomContrast(0.1),
+    tf.keras.layers.RandomTranslation(0.05, 0.05),  # Optional: simulates shift in image position
+])
 
-        # Encode all labels to integers
-        self.encoded_labels = self.label_encoder.transform(self.labels)
 
-    def __len__(self):
-        return len(self.image_paths)  # Return total number of images
+# Apply augmentation to training set
+train_ds = train_ds.map(lambda x, y: (data_augmentation(x, training=True), y))
 
-    def __getitem__(self, idx):
-        img = Image.open(self.image_paths[idx]).convert('RGB')  # Load image and convert to RGB
-        label = self.encoded_labels[idx]  # Get the label
-        if self.transform:
-            img = self.transform(img)  # Apply transformations
-        return img, label  # Return image and numerical labels
+# Optimize input pipeline (performance improvement)
+AUTOTUNE = tf.data.AUTOTUNE
+train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
+val_ds = val_ds.prefetch(buffer_size=AUTOTUNE)
