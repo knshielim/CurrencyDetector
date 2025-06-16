@@ -1,177 +1,146 @@
 # =============================================================================
-# ENHANCED TENSORFLOW CURRENCY CLASSIFIER
+# Currency Classification Model using EfficientNetV2B2
 # =============================================================================
+
 import os
+import zipfile
 import numpy as np
-import tensorflow as tf
 import matplotlib.pyplot as plt
-from tensorflow.keras import layers, models
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.optimizers.experimental import AdamW
-from tensorflow.keras.losses import CategoricalCrossentropy
-from tensorflow.keras.optimizers.schedules import CosineDecay
+import tensorflow as tf
+from sklearn.utils.class_weight import compute_class_weight
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
 from tensorflow.keras.applications import EfficientNetV2B2
-from tensorflow.keras.applications.efficientnet_v2 import preprocess_input
+from tensorflow.keras.applications.efficientnet import preprocess_input
+from tensorflow.keras.preprocessing import image_dataset_from_directory
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+
+# Fix OMP error in Windows
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # =============================================================================
-# CONFIGURATION
+# STEP 1 - Set Paths and Parameters
 # =============================================================================
-tf.get_logger().setLevel('ERROR')
-tf.random.set_seed(42)
-np.random.seed(42)
-
-# GPU setup
-gpus = tf.config.experimental.list_physical_devices('GPU')
-if gpus:
-    for gpu in gpus:
-        tf.config.experimental.set_memory_growth(gpu, True)
-    print(f"✅ {len(gpus)} GPU(s) configured.")
-
-IMG_SIZE = 224
+ZIP_FILE = "dataset.zip"
+EXTRACT_PATH = "dataset"
+IMG_SIZE = (260, 260)
 BATCH_SIZE = 32
-DATASET_DIR = 'dataset'
-TRAIN_SPLIT, VAL_SPLIT = 0.7, 0.15
+EPOCHS_STAGE1 = 40
+EPOCHS_STAGE2 = 40
+MODEL_PATH = "best_currency_model.keras"
 
 # =============================================================================
-# DATA LOADING
+# STEP 2 - Extract Dataset
 # =============================================================================
-print("📘 Loading dataset...")
-full_dataset = tf.keras.utils.image_dataset_from_directory(
-    DATASET_DIR,
-    label_mode='categorical',
-    seed=42,
-    image_size=(IMG_SIZE, IMG_SIZE),
-    batch_size=BATCH_SIZE
-)
+if not os.path.exists(EXTRACT_PATH):
+    with zipfile.ZipFile(ZIP_FILE, 'r') as zip_ref:
+        zip_ref.extractall()
 
-CLASS_NAMES = full_dataset.class_names
+train_dir = os.path.join(EXTRACT_PATH, "train")
+val_dir = os.path.join(EXTRACT_PATH, "validation")
+test_dir = os.path.join(EXTRACT_PATH, "test")
+
+# =============================================================================
+# STEP 3 - Load Datasets
+# =============================================================================
+train_ds = image_dataset_from_directory(train_dir, image_size=IMG_SIZE, batch_size=BATCH_SIZE, label_mode="categorical")
+val_ds = image_dataset_from_directory(val_dir, image_size=IMG_SIZE, batch_size=BATCH_SIZE, label_mode="categorical")
+test_ds = image_dataset_from_directory(test_dir, image_size=IMG_SIZE, batch_size=BATCH_SIZE, label_mode="categorical")
+
+CLASS_NAMES = train_ds.class_names
 NUM_CLASSES = len(CLASS_NAMES)
-print(f"✅ Classes: {CLASS_NAMES}")
 
-total_batches = tf.data.experimental.cardinality(full_dataset).numpy()
-train_size = int(TRAIN_SPLIT * total_batches)
-val_size = int(VAL_SPLIT * total_batches)
-
-train_dataset = full_dataset.take(train_size)
-val_dataset = full_dataset.skip(train_size).take(val_size)
-test_dataset = full_dataset.skip(train_size + val_size)
+AUTOTUNE = tf.data.AUTOTUNE
+train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
+val_ds = val_ds.prefetch(buffer_size=AUTOTUNE)
+test_ds = test_ds.prefetch(buffer_size=AUTOTUNE)
 
 # =============================================================================
-# AUGMENTATION + PREPROCESSING
+# STEP 4 - Data Augmentation
 # =============================================================================
 data_augmentation = tf.keras.Sequential([
-    layers.RandomFlip("horizontal"),
-    layers.RandomRotation(0.15),
-    layers.RandomZoom(0.2),
-    layers.RandomContrast(0.1),
-], name="augmentation")
-
-def prepare(ds, augment=False, shuffle=False):
-    ds = ds.cache()
-    if shuffle:
-        ds = ds.shuffle(1000)
-    if augment:
-        ds = ds.map(lambda x, y: (data_augmentation(x), y),
-                    num_parallel_calls=tf.data.AUTOTUNE)
-    ds = ds.map(lambda x, y: (preprocess_input(x), y),
-                num_parallel_calls=tf.data.AUTOTUNE)
-    return ds.prefetch(tf.data.AUTOTUNE)
-
-train_ds = prepare(train_dataset, augment=True, shuffle=True)
-val_ds = prepare(val_dataset)
-test_ds = prepare(test_dataset)
+    tf.keras.layers.RandomFlip("horizontal"),
+    tf.keras.layers.RandomRotation(0.1),
+    tf.keras.layers.RandomZoom(0.1),
+    tf.keras.layers.RandomContrast(0.1),
+    tf.keras.layers.RandomBrightness(0.1)
+], name="data_augmentation")
 
 # =============================================================================
-# MODEL BUILDING
+# STEP 5 - Build Model
 # =============================================================================
-def build_model(input_shape=(IMG_SIZE, IMG_SIZE, 3), num_classes=NUM_CLASSES):
-    base_model = EfficientNetV2B2(include_top=False, weights='imagenet', input_shape=input_shape)
-    base_model.trainable = False
+base_model = EfficientNetV2B2(include_top=False, weights="imagenet", input_shape=IMG_SIZE + (3,))
+base_model.trainable = False
 
-    inputs = layers.Input(shape=input_shape)
-    x = base_model(inputs, training=False)
-    x = layers.GlobalAveragePooling2D()(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.Dropout(0.4)(x)
-    outputs = layers.Dense(num_classes, activation='softmax')(x)
-    return models.Model(inputs, outputs)
+inputs = tf.keras.Input(shape=IMG_SIZE + (3,))
+x = data_augmentation(inputs)
+x = preprocess_input(x)
+x = base_model(x, training=False)
+x = GlobalAveragePooling2D()(x)
+x = Dropout(0.4)(x)
+outputs = tf.keras.layers.Dense(NUM_CLASSES, activation="softmax")(x)
+model = Model(inputs, outputs)
 
-model = build_model()
-model.summary()
+model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
 
 # =============================================================================
-# PHASE 1: TRAIN CLASSIFICATION HEAD
+# STEP 6 - Callbacks
 # =============================================================================
-print("\n📘 Phase 1: Training top layers...")
-model.compile(
-    optimizer=AdamW(learning_rate=1e-3),
-    loss=CategoricalCrossentropy(label_smoothing=0.1),
-    metrics=['accuracy']
-)
-
-callbacks_phase1 = [
-    EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+callbacks = [
+    EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True),
+    ModelCheckpoint(MODEL_PATH, monitor="val_loss", save_best_only=True),
+    ReduceLROnPlateau(monitor="val_loss", factor=0.2, patience=3)
 ]
 
-history1 = model.fit(train_ds, validation_data=val_ds, epochs=40, callbacks=callbacks_phase1)
+# =============================================================================
+# STEP 7 - Compute Class Weights
+# =============================================================================
+all_labels = []
+for _, labels in train_ds.unbatch():
+    all_labels.append(np.argmax(labels.numpy()))
+class_weights = compute_class_weight(class_weight='balanced', classes=np.unique(all_labels), y=all_labels)
+class_weights_dict = {i: weight for i, weight in enumerate(class_weights)}
 
 # =============================================================================
-# PHASE 2: FINE-TUNING
+# STEP 8 - Train Model: Stage 1
 # =============================================================================
-print("\n📘 Phase 2: Fine-tuning full model...")
-base_model = model.layers[1]
+print("📈 Training Stage 1: Feature Extraction...")
+history1 = model.fit(train_ds, validation_data=val_ds, epochs=EPOCHS_STAGE1,
+                     callbacks=callbacks, class_weight=class_weights_dict)
+
+# =============================================================================
+# STEP 9 - Fine-tune Model: Stage 2
+# =============================================================================
+print("🔁 Training Stage 2: Fine-tuning...")
 base_model.trainable = True
-
-fine_tune_at = int(len(base_model.layers) * 0.6)
-for layer in base_model.layers[:fine_tune_at]:
+for layer in base_model.layers[:100]:  # Optionally freeze early layers
     layer.trainable = False
 
-decay_steps = tf.data.experimental.cardinality(train_ds).numpy() * 60
-cosine_schedule = CosineDecay(initial_learning_rate=1e-5, decay_steps=decay_steps)
-
-model.compile(
-    optimizer=AdamW(learning_rate=cosine_schedule),
-    loss=CategoricalCrossentropy(label_smoothing=0.1),
-    metrics=['accuracy']
-)
-
-history2 = model.fit(
-    train_ds,
-    validation_data=val_ds,
-    epochs=len(history1.history['loss']) + 60,
-    initial_epoch=len(history1.history['loss']),
-    callbacks=callbacks_phase1
-)
+model.compile(optimizer=tf.keras.optimizers.Adam(1e-5), loss="categorical_crossentropy", metrics=["accuracy"])
+history2 = model.fit(train_ds, validation_data=val_ds, epochs=EPOCHS_STAGE2,
+                     callbacks=callbacks, class_weight=class_weights_dict)
 
 # =============================================================================
-# SAVE COMPLETE MODEL
-# =============================================================================
-print("\n💾 Saving full model...")
-model.save("best_currency_model.keras")
-
-# =============================================================================
-# EVALUATE ON TEST SET
+# STEP 10 - Evaluate on Test Set
 # =============================================================================
 print("\n📊 Evaluating on test set...")
-# Reload to confirm everything is correct
-model = tf.keras.models.load_model("best_currency_model.keras")
+model.load_weights(MODEL_PATH)
 test_loss, test_acc = model.evaluate(test_ds)
 print(f"✅ Test Accuracy: {test_acc:.4f}")
 print(f"✅ Test Loss: {test_loss:.4f}")
 
 # =============================================================================
-# VISUALIZE AUGMENTED IMAGES
+# STEP 11 - Visualize Augmented Samples
 # =============================================================================
 print("\n🎨 Visualizing augmented samples...")
 plt.figure(figsize=(12, 8))
 for images, labels in train_ds.take(1):
     for i in range(9):
         ax = plt.subplot(3, 3, i + 1)
-        plt.imshow((images[i].numpy() + 1) / 2)  # De-normalize
+        image = tf.clip_by_value((images[i] * 127.5 + 127.5) / 255.0, 0, 1)
+        plt.imshow(image)
         plt.title(CLASS_NAMES[np.argmax(labels[i])])
         plt.axis("off")
 plt.tight_layout()
 plt.savefig("augmented_images_preview.png")
 plt.show()
-
-print("\n🎉 Training and evaluation complete.")
