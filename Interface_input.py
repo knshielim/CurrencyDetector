@@ -14,7 +14,7 @@ class FileUploaderApp(tk.Tk):
         self.geometry("600x500")
         self.configure(bg="#f0f2f5")
 
-        self.model = load_model("currency_classifier_final_model.h5")
+        self.model = load_model("best_currency_model.keras")
         with open("class_names.pkl", "rb") as f:
             self.class_names = pickle.load(f)
 

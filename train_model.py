@@ -1,146 +1,116 @@
 # =============================================================================
-# Currency Classification Model using EfficientNetV2B2
+# STEP 1 - Import Libraries
 # =============================================================================
-
 import os
-import zipfile
-import numpy as np
-import matplotlib.pyplot as plt
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 import tensorflow as tf
-from sklearn.utils.class_weight import compute_class_weight
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications import EfficientNetV2B2
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
-from tensorflow.keras.applications import EfficientNetV2B2
-from tensorflow.keras.applications.efficientnet import preprocess_input
-from tensorflow.keras.preprocessing import image_dataset_from_directory
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 
-# Fix OMP error in Windows
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+# =============================================================================
+# STEP 2 - Path Setup
+# =============================================================================
+base_path = "Dataset"  # adjust if needed
+train_path = os.path.join(base_path, 'train')
+val_path = os.path.join(base_path, 'validation')
+test_path = os.path.join(base_path, 'test')
 
 # =============================================================================
-# STEP 1 - Set Paths and Parameters
+# STEP 3 - Image Parameters and Augmentation
 # =============================================================================
-ZIP_FILE = "dataset.zip"
-EXTRACT_PATH = "dataset"
-IMG_SIZE = (260, 260)
-BATCH_SIZE = 32
-EPOCHS_STAGE1 = 40
-EPOCHS_STAGE2 = 40
-MODEL_PATH = "best_currency_model.keras"
+img_size = (260, 260)
+batch_size = 16
+
+train_datagen = ImageDataGenerator(
+    rescale=1./255,
+    rotation_range=30,
+    width_shift_range=0.2,
+    height_shift_range=0.2,
+    shear_range=0.2,
+    zoom_range=0.2,
+    horizontal_flip=True,
+    fill_mode='nearest'
+)
+
+val_test_datagen = ImageDataGenerator(rescale=1./255)
+
+train_generator = train_datagen.flow_from_directory(
+    train_path,
+    target_size=img_size,
+    batch_size=batch_size,
+    class_mode='categorical'
+)
+
+val_generator = val_test_datagen.flow_from_directory(
+    val_path,
+    target_size=img_size,
+    batch_size=batch_size,
+    class_mode='categorical'
+)
+
+test_generator = val_test_datagen.flow_from_directory(
+    test_path,
+    target_size=img_size,
+    batch_size=batch_size,
+    class_mode='categorical',
+    shuffle=False
+)
+
+num_classes = train_generator.num_classes
 
 # =============================================================================
-# STEP 2 - Extract Dataset
+# STEP 4 - Model Creation (EfficientNetV2B2)
 # =============================================================================
-if not os.path.exists(EXTRACT_PATH):
-    with zipfile.ZipFile(ZIP_FILE, 'r') as zip_ref:
-        zip_ref.extractall()
+base_model = EfficientNetV2B2(
+    include_top=False,
+    input_shape=img_size + (3,),
+    weights='imagenet'
+)
+base_model.trainable = False  # Freeze base
 
-train_dir = os.path.join(EXTRACT_PATH, "train")
-val_dir = os.path.join(EXTRACT_PATH, "validation")
-test_dir = os.path.join(EXTRACT_PATH, "test")
-
-# =============================================================================
-# STEP 3 - Load Datasets
-# =============================================================================
-train_ds = image_dataset_from_directory(train_dir, image_size=IMG_SIZE, batch_size=BATCH_SIZE, label_mode="categorical")
-val_ds = image_dataset_from_directory(val_dir, image_size=IMG_SIZE, batch_size=BATCH_SIZE, label_mode="categorical")
-test_ds = image_dataset_from_directory(test_dir, image_size=IMG_SIZE, batch_size=BATCH_SIZE, label_mode="categorical")
-
-CLASS_NAMES = train_ds.class_names
-NUM_CLASSES = len(CLASS_NAMES)
-
-AUTOTUNE = tf.data.AUTOTUNE
-train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
-val_ds = val_ds.prefetch(buffer_size=AUTOTUNE)
-test_ds = test_ds.prefetch(buffer_size=AUTOTUNE)
+x = GlobalAveragePooling2D()(base_model.output)
+x = Dropout(0.3)(x)
+x = Dense(256, activation='relu')(x)
+x = Dropout(0.3)(x)
+outputs = Dense(num_classes, activation='softmax')(x)
+model = Model(inputs=base_model.input, outputs=outputs)
 
 # =============================================================================
-# STEP 4 - Data Augmentation
+# STEP 5 - Compile Model
 # =============================================================================
-data_augmentation = tf.keras.Sequential([
-    tf.keras.layers.RandomFlip("horizontal"),
-    tf.keras.layers.RandomRotation(0.1),
-    tf.keras.layers.RandomZoom(0.1),
-    tf.keras.layers.RandomContrast(0.1),
-    tf.keras.layers.RandomBrightness(0.1)
-], name="data_augmentation")
-
-# =============================================================================
-# STEP 5 - Build Model
-# =============================================================================
-base_model = EfficientNetV2B2(include_top=False, weights="imagenet", input_shape=IMG_SIZE + (3,))
-base_model.trainable = False
-
-inputs = tf.keras.Input(shape=IMG_SIZE + (3,))
-x = data_augmentation(inputs)
-x = preprocess_input(x)
-x = base_model(x, training=False)
-x = GlobalAveragePooling2D()(x)
-x = Dropout(0.4)(x)
-outputs = tf.keras.layers.Dense(NUM_CLASSES, activation="softmax")(x)
-model = Model(inputs, outputs)
-
-model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=3e-4),
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
 
 # =============================================================================
 # STEP 6 - Callbacks
 # =============================================================================
 callbacks = [
-    EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True),
-    ModelCheckpoint(MODEL_PATH, monitor="val_loss", save_best_only=True),
-    ReduceLROnPlateau(monitor="val_loss", factor=0.2, patience=3)
+    EarlyStopping(monitor='val_accuracy', patience=7, restore_best_weights=True),
+    ModelCheckpoint('best_currency_model.keras', save_best_only=True),
+    ReduceLROnPlateau(monitor='val_accuracy', factor=0.3, patience=3, verbose=1)
 ]
 
 # =============================================================================
-# STEP 7 - Compute Class Weights
+# STEP 7 - Train the Model
 # =============================================================================
-all_labels = []
-for _, labels in train_ds.unbatch():
-    all_labels.append(np.argmax(labels.numpy()))
-class_weights = compute_class_weight(class_weight='balanced', classes=np.unique(all_labels), y=all_labels)
-class_weights_dict = {i: weight for i, weight in enumerate(class_weights)}
+history = model.fit(
+    train_generator,
+    validation_data=val_generator,
+    epochs=50,
+    callbacks=callbacks
+)
 
 # =============================================================================
-# STEP 8 - Train Model: Stage 1
+# STEP 8 - Evaluate the Model
 # =============================================================================
-print("📈 Training Stage 1: Feature Extraction...")
-history1 = model.fit(train_ds, validation_data=val_ds, epochs=EPOCHS_STAGE1,
-                     callbacks=callbacks, class_weight=class_weights_dict)
+loss, acc = model.evaluate(test_generator)
+print(f"Test accuracy: {acc:.4f}")
 
 # =============================================================================
-# STEP 9 - Fine-tune Model: Stage 2
+# STEP 9 - Save Final Model
 # =============================================================================
-print("🔁 Training Stage 2: Fine-tuning...")
-base_model.trainable = True
-for layer in base_model.layers[:100]:  # Optionally freeze early layers
-    layer.trainable = False
-
-model.compile(optimizer=tf.keras.optimizers.Adam(1e-5), loss="categorical_crossentropy", metrics=["accuracy"])
-history2 = model.fit(train_ds, validation_data=val_ds, epochs=EPOCHS_STAGE2,
-                     callbacks=callbacks, class_weight=class_weights_dict)
-
-# =============================================================================
-# STEP 10 - Evaluate on Test Set
-# =============================================================================
-print("\n📊 Evaluating on test set...")
-model.load_weights(MODEL_PATH)
-test_loss, test_acc = model.evaluate(test_ds)
-print(f"✅ Test Accuracy: {test_acc:.4f}")
-print(f"✅ Test Loss: {test_loss:.4f}")
-
-# =============================================================================
-# STEP 11 - Visualize Augmented Samples
-# =============================================================================
-print("\n🎨 Visualizing augmented samples...")
-plt.figure(figsize=(12, 8))
-for images, labels in train_ds.take(1):
-    for i in range(9):
-        ax = plt.subplot(3, 3, i + 1)
-        image = tf.clip_by_value((images[i] * 127.5 + 127.5) / 255.0, 0, 1)
-        plt.imshow(image)
-        plt.title(CLASS_NAMES[np.argmax(labels[i])])
-        plt.axis("off")
-plt.tight_layout()
-plt.savefig("augmented_images_preview.png")
-plt.show()
+model.save('final_currency_model.keras')
