@@ -1,116 +1,92 @@
-# =============================================================================
-# STEP 1 - Import Libraries
-# =============================================================================
 import os
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
-import tensorflow as tf
+import numpy as np
+from collections import Counter
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.applications import EfficientNetV2B2
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.models import load_model
+import matplotlib.pyplot as plt
 
-# =============================================================================
-# STEP 2 - Path Setup
-# =============================================================================
-base_path = "Dataset"  # adjust if needed
-train_path = os.path.join(base_path, 'train')
-val_path = os.path.join(base_path, 'validation')
-test_path = os.path.join(base_path, 'test')
+# === Configuration ===
+data_path = 'dataset'           # dataset directory
+image_size = (128, 128)         # resize all images to 128x128
+batch_size = 32
+epochs = 10
+model_path = 'currency_model.h5'
 
-# =============================================================================
-# STEP 3 - Image Parameters and Augmentation
-# =============================================================================
-img_size = (260, 260)
-batch_size = 16
+# === Load and preprocess the dataset ===
+datagen = ImageDataGenerator(rescale=1./255, validation_split=0.2)
 
-train_datagen = ImageDataGenerator(
-    rescale=1./255,
-    rotation_range=30,
-    width_shift_range=0.2,
-    height_shift_range=0.2,
-    shear_range=0.2,
-    zoom_range=0.2,
-    horizontal_flip=True,
-    fill_mode='nearest'
-)
-
-val_test_datagen = ImageDataGenerator(rescale=1./255)
-
-train_generator = train_datagen.flow_from_directory(
-    train_path,
-    target_size=img_size,
-    batch_size=batch_size,
-    class_mode='categorical'
-)
-
-val_generator = val_test_datagen.flow_from_directory(
-    val_path,
-    target_size=img_size,
-    batch_size=batch_size,
-    class_mode='categorical'
-)
-
-test_generator = val_test_datagen.flow_from_directory(
-    test_path,
-    target_size=img_size,
+train_generator = datagen.flow_from_directory(
+    data_path,
+    target_size=image_size,
     batch_size=batch_size,
     class_mode='categorical',
-    shuffle=False
+    subset='training',
+    shuffle=True
 )
 
-num_classes = train_generator.num_classes
-
-# =============================================================================
-# STEP 4 - Model Creation (EfficientNetV2B2)
-# =============================================================================
-base_model = EfficientNetV2B2(
-    include_top=False,
-    input_shape=img_size + (3,),
-    weights='imagenet'
+val_generator = datagen.flow_from_directory(
+    data_path,
+    target_size=image_size,
+    batch_size=batch_size,
+    class_mode='categorical',
+    subset='validation',
+    shuffle=True
 )
-base_model.trainable = False  # Freeze base
 
-x = GlobalAveragePooling2D()(base_model.output)
-x = Dropout(0.3)(x)
-x = Dense(256, activation='relu')(x)
-x = Dropout(0.3)(x)
-outputs = Dense(num_classes, activation='softmax')(x)
-model = Model(inputs=base_model.input, outputs=outputs)
+# === Label distribution ===
+train_labels = train_generator.classes
+label_counts = Counter(train_labels)
+print("\nLabel Distribution in Training Data:")
+for label, count in label_counts.items():
+    class_name = list(train_generator.class_indices.keys())[list(train_generator.class_indices.values()).index(label)]
+    print(f"{class_name}: {count}")
 
-# =============================================================================
-# STEP 5 - Compile Model
-# =============================================================================
-model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=3e-4),
+# === Build CNN Model ===
+model = Sequential([
+    Conv2D(32, (3, 3), activation='relu', input_shape=(image_size[0], image_size[1], 3)),
+    MaxPooling2D(2, 2),
+    Conv2D(64, (3, 3), activation='relu'),
+    MaxPooling2D(2, 2),
+    Flatten(),
+    Dense(128, activation='relu'),
+    Dropout(0.5),
+    Dense(train_generator.num_classes, activation='softmax')
+])
+
+model.compile(optimizer=Adam(learning_rate=0.001),
               loss='categorical_crossentropy',
               metrics=['accuracy'])
 
-# =============================================================================
-# STEP 6 - Callbacks
-# =============================================================================
-callbacks = [
-    EarlyStopping(monitor='val_accuracy', patience=7, restore_best_weights=True),
-    ModelCheckpoint('best_currency_model.keras', save_best_only=True),
-    ReduceLROnPlateau(monitor='val_accuracy', factor=0.3, patience=3, verbose=1)
-]
-
-# =============================================================================
-# STEP 7 - Train the Model
-# =============================================================================
+# === Train model ===
 history = model.fit(
     train_generator,
     validation_data=val_generator,
-    epochs=50,
-    callbacks=callbacks
+    epochs=epochs
 )
 
-# =============================================================================
-# STEP 8 - Evaluate the Model
-# =============================================================================
-loss, acc = model.evaluate(test_generator)
-print(f"Test accuracy: {acc:.4f}")
+# === Save the model ===
+model.save(model_path)
+print(f"\nModel saved to: {model_path}")
 
-# =============================================================================
-# STEP 9 - Save Final Model
-# =============================================================================
-model.save('final_currency_model.keras')
+# === Plot training results ===
+plt.figure(figsize=(12, 5))
+
+# Accuracy plot
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'], label='Train')
+plt.plot(history.history['val_accuracy'], label='Val')
+plt.title('Accuracy')
+plt.legend()
+
+# Loss plot
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'], label='Train')
+plt.plot(history.history['val_loss'], label='Val')
+plt.title('Loss')
+plt.legend()
+
+plt.tight_layout()
+plt.show()

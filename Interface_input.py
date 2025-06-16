@@ -4,19 +4,46 @@ from PIL import Image, ImageTk
 import numpy as np
 import os
 import pickle
+import tensorflow as tf
 from tensorflow.keras.models import load_model
-from normalize import normalize_image
+
+
+def normalize_image(filepath, size=(128, 128)):
+    """
+    Preprocesses an image file to match model input format.
+    Resizes, normalizes, and reshapes the image as per training config.
+    """
+    try:
+        img = tf.io.read_file(filepath)
+        img = tf.image.decode_image(img, channels=3, expand_animations=False)
+        img = tf.image.resize(img, size)
+        img = img / 255.0  # Normalize as done in training
+        input_array = tf.expand_dims(img, axis=0)  # Add batch dimension
+        return input_array
+    except Exception as e:
+        messagebox.showerror("Error", f"Image preprocessing failed:\n{e}")
+        return None
+
 
 class FileUploaderApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Currency Detector")
-        self.geometry("600x500")
+        self.geometry("600x550")
         self.configure(bg="#f0f2f5")
 
-        self.model = load_model("best_currency_model.keras")
-        with open("class_names.pkl", "rb") as f:
-            self.class_names = pickle.load(f)
+        try:
+            self.model = load_model("currency_model.h5")
+        except Exception as e:
+            messagebox.showerror("Model Load Error", f"Could not load model:\n{e}")
+            self.model = None
+
+        try:
+            with open("class_names.pkl", "rb") as f:
+                self.class_names = pickle.load(f)
+        except Exception as e:
+            messagebox.showerror("Class Names Load Error", f"Could not load class names:\n{e}")
+            self.class_names = []
 
         self.selected_filepath = None
         self._create_widgets()
@@ -31,7 +58,7 @@ class FileUploaderApp(tk.Tk):
 
         self.result_label = tk.Label(self, text="", bg="#f0f2f5", font=("Helvetica", 12))
         self.result_label.pack()
-        
+
         self.image_label = tk.Label(self, bg="#f0f2f5")
         self.image_label.pack(pady=10)
 
@@ -39,6 +66,11 @@ class FileUploaderApp(tk.Tk):
         filepath = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg *.jpeg *.png")])
         if filepath:
             self.selected_filepath = filepath
+            img = Image.open(filepath)
+            img.thumbnail((200, 200))
+            tk_image = ImageTk.PhotoImage(img)
+            self.image_label.configure(image=tk_image)
+            self.image_label.image = tk_image
             self.result_label.config(text=f"Selected: {os.path.basename(filepath)}")
 
     def _analyze_file(self):
@@ -46,57 +78,29 @@ class FileUploaderApp(tk.Tk):
             messagebox.showwarning("No File", "Please choose an image file first.")
             return
 
-        input_array = normalize_image(self.selected_filepath)
-
-        if input_array is None:
-            messagebox.showerror("Error", "Failed to process the image.")
-            return
-
-        # Convert normalized array (float32, 0–1) back to PIL Image for display
-        display_image = (input_array[0] * 255).astype(np.uint8)
-        display_image = Image.fromarray(display_image)
-
-        # Resize for UI display (misalnya 200x200 agar pas)
-        display_image = display_image.resize((200, 200))
-        tk_image = ImageTk.PhotoImage(display_image)
-
-        self.image_label.configure(image=tk_image)
-        self.image_label.image = tk_image  # prevent garbage collection
-
-        # Predict
-        predictions = self.model.predict(input_array)
-        top_3_indices = np.argsort(predictions[0])[::-1][:3]
-
-        result_text = "Top Predictions:\n"
-        for idx in top_3_indices:
-            label = self.class_names[idx]
-            confidence = predictions[0][idx] * 100
-            result_text += f"- {label}: {confidence:.2f}%\n"
-
-        self.result_label.config(text=result_text)
-
-"""
-    def _analyze_file(self):
-        if not self.selected_filepath:
-            messagebox.showwarning("No File", "Please choose an image file first.")
+        if self.model is None or not self.class_names:
+            messagebox.showerror("Prediction Error", "Model or class names not loaded.")
             return
 
         input_array = normalize_image(self.selected_filepath)
         if input_array is None:
-            messagebox.showerror("Error", "Failed to process the image.")
             return
 
-        predictions = self.model.predict(input_array)
-        top_3_indices = np.argsort(predictions[0])[::-1][:3]
+        try:
+            predictions = self.model.predict(input_array)
+            top_3_indices = np.argsort(predictions[0])[::-1][:3]
 
-        result_text = "Top Predictions:\n"
-        for idx in top_3_indices:
-            label = self.class_names[idx]
-            confidence = predictions[0][idx] * 100
-            result_text += f"- {label}: {confidence:.2f}%\n"
+            result_text = "Top Predictions:\n"
+            for idx in top_3_indices:
+                label = self.class_names[idx]
+                confidence = predictions[0][idx] * 100
+                result_text += f"- {label}: {confidence:.2f}%\n"
 
-        self.result_label.config(text=result_text)
-"""
+            self.result_label.config(text=result_text)
+        except Exception as e:
+            messagebox.showerror("Prediction Error", f"An error occurred during prediction:\n{e}")
+
+
 if __name__ == "__main__":
     app = FileUploaderApp()
     app.mainloop()
