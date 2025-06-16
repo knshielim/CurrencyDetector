@@ -1,5 +1,5 @@
 # =============================================================================
-# ENHANCED TENSORFLOW CURRENCY CLASSIFIER (CONVERTED & UPGRADED)
+# ENHANCED TENSORFLOW CURRENCY CLASSIFIER
 # =============================================================================
 
 import os
@@ -81,7 +81,7 @@ print(f"   Test batches: {tf.data.experimental.cardinality(test_dataset).numpy()
 
 
 # =============================================================================
-# DATA AUGMENTATION & PREPROCESSING (MODERN KERAS LAYERS)
+# DATA AUGMENTATION & PREPROCESSING
 # =============================================================================
 # Define a model for GPU-accelerated data augmentation
 data_augmentation = tf.keras.Sequential([
@@ -115,7 +115,7 @@ val_ds = prepare(val_dataset)
 test_ds = prepare(test_dataset)
 
 # =============================================================================
-# MODEL DEFINITION (Using a more powerful base model)
+# MODEL DEFINITION
 # =============================================================================
 def build_currency_model(input_shape=(IMG_SIZE, IMG_SIZE, 3), num_classes=NUM_CLASSES):
     # Using EfficientNetV2-B2 - a powerful and efficient model
