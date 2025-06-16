@@ -12,6 +12,7 @@ from tensorflow.keras.optimizers.experimental import AdamW
 from tensorflow.keras.losses import CategoricalCrossentropy
 from tensorflow.keras.optimizers.schedules import CosineDecay
 from tensorflow.keras.applications import EfficientNetV2B2
+from tensorflow.keras.models import load_model
 from tensorflow.keras.applications.efficientnet_v2 import preprocess_input
 
 # =============================================================================
@@ -191,7 +192,7 @@ history2 = model.fit(
 # =============================================================================
 print("\n📊 Evaluating final model on the unseen test set...")
 # Load the best weights saved during the entire training process
-model.load_weights("best_currency_model.keras")
+model = load_model("best_currency_model.keras")
 test_loss, test_acc = model.evaluate(test_ds)
 print(f"✅ Test Set Accuracy: {test_acc:.4f}")
 print(f"✅ Test Set Loss: {test_loss:.4f}")
