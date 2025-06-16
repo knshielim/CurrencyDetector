@@ -8,7 +8,7 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 from tensorflow.keras import layers, models
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
-from tensorflow.keras.optimizers import AdamW
+from tensorflow.keras.optimizers.experimental import AdamW
 from tensorflow.keras.losses import CategoricalCrossentropy
 from tensorflow.keras.optimizers.schedules import CosineDecay
 from tensorflow.keras.applications import EfficientNetV2B2
