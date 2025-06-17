@@ -1,145 +1,92 @@
-# =============================================================================
-# IMPORT LIBRARIES
-# =============================================================================
 import os
 import numpy as np
-import tensorflow as tf
+from collections import Counter
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.utils import to_categorical
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-from sklearn.model_selection import train_test_split
-from sklearn.utils.class_weight import compute_class_weight
-from PIL import Image
-import pickle
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.models import load_model
 import matplotlib.pyplot as plt
 
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
-dataset_dir = 'dataset'
-img_size = 128
+# === Configuration ===
+data_path = 'dataset'           # dataset directory
+image_size = (128, 128)         # resize all images to 128x128
 batch_size = 32
-num_epochs = 50
+epochs = 10
+model_path = 'currency_model.h5'
 
-# =============================================================================
-# LOAD AND PREPROCESS DATA
-# =============================================================================
-X = []
-y = []
-label_names = []
-label_map = {}
+# === Load and preprocess the dataset ===
+datagen = ImageDataGenerator(rescale=1./255, validation_split=0.2)
 
-for label in sorted(os.listdir(dataset_dir)):
-    label_path = os.path.join(dataset_dir, label)
-    if not os.path.isdir(label_path):
-        continue
-
-    image_files = os.listdir(label_path)
-    if len(image_files) < 4:
-        print(f"Skipping class {label} (not enough images)")
-        continue
-
-    for image_file in image_files:
-        try:
-            img_path = os.path.join(label_path, image_file)
-            image = Image.open(img_path).convert('RGB')
-            image = image.resize((img_size, img_size))
-            image_array = np.array(image) / 255.0
-
-            if label not in label_map:
-                label_map[label] = len(label_map)
-                label_names.append(label)
-
-            X.append(image_array)
-            y.append(label_map[label])
-        except Exception as e:
-            print(f"Error loading image {img_path}: {e}")
-
-X = np.array(X)
-y = to_categorical(np.array(y), num_classes=len(label_names))
-
-# =============================================================================
-# SPLIT DATASET
-# =============================================================================
-X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# =============================================================================
-# COMPUTE CLASS WEIGHTS
-# =============================================================================
-class_weights = compute_class_weight(
-    class_weight='balanced',
-    classes=np.unique(np.argmax(y_train, axis=1)),
-    y=np.argmax(y_train, axis=1)
+train_generator = datagen.flow_from_directory(
+    data_path,
+    target_size=image_size,
+    batch_size=batch_size,
+    class_mode='categorical',
+    subset='training',
+    shuffle=True
 )
-class_weights_dict = dict(enumerate(class_weights))
 
-# =============================================================================
-# DATA AUGMENTATION
-# =============================================================================
-train_datagen = ImageDataGenerator(
-    rotation_range=20,
-    width_shift_range=0.2,
-    height_shift_range=0.2,
-    zoom_range=0.2,
-    horizontal_flip=True
+val_generator = datagen.flow_from_directory(
+    data_path,
+    target_size=image_size,
+    batch_size=batch_size,
+    class_mode='categorical',
+    subset='validation',
+    shuffle=True
 )
-val_datagen = ImageDataGenerator()
 
-# =============================================================================
-# SIMPLE CNN MODEL
-# =============================================================================
+# === Label distribution ===
+train_labels = train_generator.classes
+label_counts = Counter(train_labels)
+print("\nLabel Distribution in Training Data:")
+for label, count in label_counts.items():
+    class_name = list(train_generator.class_indices.keys())[list(train_generator.class_indices.values()).index(label)]
+    print(f"{class_name}: {count}")
+
+# === Build CNN Model ===
 model = Sequential([
-    Conv2D(32, (3, 3), activation='relu', input_shape=(img_size, img_size, 3)),
+    Conv2D(32, (3, 3), activation='relu', input_shape=(image_size[0], image_size[1], 3)),
     MaxPooling2D(2, 2),
     Conv2D(64, (3, 3), activation='relu'),
     MaxPooling2D(2, 2),
-    Conv2D(128, (3, 3), activation='relu'),
-    MaxPooling2D(2, 2),
     Flatten(),
-    Dropout(0.5),
     Dense(128, activation='relu'),
     Dropout(0.5),
-    Dense(len(label_names), activation='softmax')
+    Dense(train_generator.num_classes, activation='softmax')
 ])
 
-model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+model.compile(optimizer=Adam(learning_rate=0.001),
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
 
-# =============================================================================
-# CALLBACKS
-# =============================================================================
-early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
-lr_scheduler = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3)
-
-# =============================================================================
-# TRAIN MODEL
-# =============================================================================
+# === Train model ===
 history = model.fit(
-    train_datagen.flow(X_train, y_train, batch_size=batch_size),
-    epochs=num_epochs,
-    validation_data=val_datagen.flow(X_val, y_val),
-    class_weight=class_weights_dict,
-    callbacks=[early_stop, lr_scheduler]
+    train_generator,
+    validation_data=val_generator,
+    epochs=epochs
 )
 
-# =============================================================================
-# SAVE MODEL AND LABELS
-# =============================================================================
-model.save("currency_model.h5")
-print("✅ Model saved as currency_model.h5")
+# === Save the model ===
+model.save(model_path)
+print(f"\nModel saved to: {model_path}")
 
-with open("class_names.pkl", "wb") as f:
-    pickle.dump(label_names, f)
-print("✅ Class names saved to class_names.pkl")
+# === Plot training results ===
+plt.figure(figsize=(12, 5))
 
-# =============================================================================
-# PLOT TRAINING HISTORY
-# =============================================================================
-plt.plot(history.history['accuracy'], label='Train Acc')
-plt.plot(history.history['val_accuracy'], label='Val Acc')
-plt.xlabel('Epoch')
-plt.ylabel('Accuracy')
-plt.title('Training and Validation Accuracy')
+# Accuracy plot
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'], label='Train')
+plt.plot(history.history['val_accuracy'], label='Val')
+plt.title('Accuracy')
 plt.legend()
+
+# Loss plot
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'], label='Train')
+plt.plot(history.history['val_loss'], label='Val')
+plt.title('Loss')
+plt.legend()
+
+plt.tight_layout()
 plt.show()
