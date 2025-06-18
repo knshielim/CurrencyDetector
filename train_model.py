@@ -211,10 +211,10 @@ def advanced_preprocess_image(image_path, target_size=IMAGE_SIZE):
 
 
 # ======================= BALANCED DATASET CREATION =======================
-def create_balanced_dataset_v2():
+def create_balanced_dataset():
     """Create a more balanced dataset with stratified splitting"""
 
-    BASE_DIR = 'processed_dataset_v2'
+    BASE_DIR = 'processed_dataset'
     TRAIN_DIR = os.path.join(BASE_DIR, 'train')
     VAL_DIR = os.path.join(BASE_DIR, 'val')
 
@@ -294,7 +294,7 @@ def create_balanced_dataset_v2():
 
 
 # Create the enhanced balanced dataset
-BASE_DIR, class_distribution = create_balanced_dataset_v2()
+BASE_DIR, class_distribution = create_balanced_dataset()
 
 # ======================= ADVANCED DATA GENERATORS =======================
 # More aggressive augmentation for training
@@ -519,7 +519,7 @@ metadata = {
     'class_names': class_names,
     'class_distribution': class_distribution,
     'class_weights': class_weights,
-    'model_architecture': 'advanced_cnn_v2',
+    'model_architecture': 'advanced_cnn',
     'training_params': {
         'epochs': EPOCHS,
         'batch_size': BATCH_SIZE,
