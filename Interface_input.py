@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw
 import numpy as np
 import os
 import pickle
@@ -13,55 +13,23 @@ def parse_currency_label(label_string):
     Parses a currency label string (e.g., "Philippines_1000 Peso_(1985-2019) Series")
     into country, value, and year range.
     """
-    print(f"\n--- DEBUG: Parsing Label: '{label_string}' ---")
-    print(f"DEBUG: Raw Label String repr: {repr(label_string)} (Length: {len(label_string)})")
     country = "N/A"
     value = "N/A"
     year_range = "N/A"
-
-    # UPDATED Main Regex:
-    # - ([a-zA-Z\s]+) : Captures country name (Group 1)
-    # - _ : Matches literal underscore
-    # - ([a-zA-Z0-9\s]+) : Greedy capture for the value/denomination part. (Group 2)
-    # - (?:_|\s+) : Non-capturing group for the separator: an underscore OR one or more spaces.
-    # - (.*) : NEW: Captures everything else as 'remaining_info'. (Group 3)
-    #   This makes the main regex more flexible, allowing the subsequent year extraction logic
-    #   to find the year within this broader string.
     match = re.match(r"([a-zA-Z\s]+)_([a-zA-Z0-9\s]+)(?:_|\s+)(.*)", label_string)
-
     if match:
         country_part = match.group(1).strip()
         value_part = match.group(2).strip()
         remaining_info = match.group(3).strip()
-
-        print(f"DEBUG: Main Regex captured groups:")
-        print(f"  Group 1 (country_part): '{country_part}'")
-        print(f"  Group 2 (value_part):   '{value_part}'")
-        print(f"  Group 3 (remaining_info): '{remaining_info}'")
-
         country = country_part.split('_')[0].strip()
         value = value_part
-
-        # Robustly extract year from remaining_info (this part remains the same)
-        # 1. Try to find year in parentheses, allowing for "Present" or similar text
         year_match = re.search(r"\((\d{4}(?:[-\s]*[\w\s]+)?)\)", remaining_info)
         if year_match:
             year_range = year_match.group(1).strip()
-            print(f"DEBUG: Year matched from parentheses in remaining_info: '{year_range}'")
         else:
-            # 2. If not in parentheses, look for a standalone 4-digit or 4-digit-4-digit number
             year_match = re.search(r"\b(\d{4}(?:-\d{4})?)\b", remaining_info)
             if year_match:
                 year_range = year_match.group(1)
-                print(f"DEBUG: Year matched standalone in remaining_info: '{year_range}'")
-            else:
-                print(f"DEBUG: No year found in remaining_info.")
-
-    else:
-        print(f"DEBUG: FATAL: Main Regex failed for label: '{label_string}'")
-
-    print(f"DEBUG: Final Parsed Result - Country: '{country}', Value: '{value}', Year: '{year_range}'")
-    print("---------------------------------------")
     return country, value, year_range
 
 
@@ -81,90 +49,183 @@ def normalize_image(filepath, size=(128, 128)):
         messagebox.showerror("Error", f"Image preprocessing failed:\n{e}")
         return None
 
+# --- Function to create a rounded rectangle image programmatically ---
+def create_rounded_rectangle_image(width, height, radius, color, file_name):
+    img = Image.new("RGBA", (width, height), (255, 255, 255, 0)) # Transparent background (alpha=0)
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle((0, 0, width, height), radius=radius, fill=color)
+    img.save(file_name)
+    print(f"Generated {file_name}")
 
+# IMPORTANT: These lines are for generating images. Uncomment, run once, then re-comment.
+# create_rounded_rectangle_image(250, 50, 15, "#4CAF50", "button_green_rounded.png") # Choose Image Button (Accent Green)
+# create_rounded_rectangle_image(300, 60, 18, "#388E3C", "button_dark_green_rounded.png") # Predict Button (Darker Green)
+
+
+# --- Main Application Class ---
 class FileUploaderApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Currency Detector")
-        self.geometry("600x650")
-        self.configure(bg="#f0f2f5")
+        self.geometry("700x750")
+        self.configure(bg="#2C2C2C") # Dark gray background for the main window
 
+        # Load model and class names
         try:
-            self.model = load_model("currency_classifier.h5")
+            self.model = load_model("currency_classifier.h5") # Ensure this path is correct
         except Exception as e:
-            messagebox.showerror("Model Load Error", f"Could not load model:\n{e}")
+            messagebox.showerror("Model Load Error", f"Could not load model. Please ensure 'currency_classifier.h5' is in the same directory.\nDetails: {e}")
             self.model = None
 
         try:
             with open("class_names.pkl", "rb") as f:
                 self.class_names = pickle.load(f)
         except Exception as e:
-            messagebox.showerror("Class Names Load Error", f"Could not load class names:\n{e}")
+            messagebox.showerror("Class Names Load Error", f"Could not load class names. Please ensure 'class_names.pkl' is in the same directory.\nDetails: {e}")
             self.class_names = []
 
         self.selected_filepath = None
+
+        # Load button images with new names to reflect colors (ensure these files exist)
+        try:
+            self.btn_green_img = ImageTk.PhotoImage(Image.open("button_green_rounded.png"))
+            self.btn_dark_green_img = ImageTk.PhotoImage(Image.open("button_dark_green_rounded.png")) # Changed filename
+        except FileNotFoundError as e:
+            messagebox.showerror("Image Load Error", f"Could not find button image files. Please ensure 'button_green_rounded.png' and 'button_dark_green_rounded.png' are in the same directory.\nDetails: {e}")
+            self.btn_green_img = None
+            self.btn_dark_green_img = None
+        except Exception as e:
+            messagebox.showerror("Image Load Error", f"An error occurred loading button images:\n{e}")
+            self.btn_green_img = None
+            self.btn_dark_green_img = None
+
         self._create_widgets()
 
     def _create_widgets(self):
-        # Title
-        tk.Label(self, text="Upload Currency Image", font=("Helvetica", 18, "bold"), bg="#f0f2f5", fg="#333").pack(
-            pady=20)
+        # Create a main_canvas to hold all content and allow scrolling
+        main_canvas = tk.Canvas(self, bg="#2C2C2C", highlightthickness=0) # Match window bg, remove canvas border
+        main_canvas.pack(side="left", fill="both", expand=True)
 
-        # Frame for image selection and display
-        image_frame = tk.Frame(self, bg="#f0f2f5", bd=2, relief="groove")
-        image_frame.pack(pady=10, padx=20, fill="x")
+        # Create a scrollbar for the canvas
+        scrollbar = tk.Scrollbar(self, orient="vertical", command=main_canvas.yview, troughcolor="#555555")
+        scrollbar.pack(side="right", fill="y")
 
-        tk.Button(image_frame, text="Choose Image", command=self._browse_files, font=("Helvetica", 10), bg="#4CAF50",
-                  fg="white", padx=10, pady=5).pack(side="top", pady=10)
+        # Configure the canvas to use the scrollbar
+        main_canvas.configure(yscrollcommand=scrollbar.set)
 
-        self.image_label = tk.Label(image_frame, bg="#f0f2f5")
-        self.image_label.pack(pady=10)
+        # Create a frame inside the canvas to put all actual widgets
+        # This frame will be the scrollable content
+        self.scrollable_frame = tk.Frame(main_canvas, bg="#2C2C2C") # Match window bg
 
-        self.selected_file_label = tk.Label(image_frame, text="No image selected", bg="#f0f2f5",
-                                            font=("Helvetica", 10, "italic"))
+        # Add the scrollable_frame to a window on the canvas
+        # This is how content is placed inside a canvas for scrolling
+        main_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+
+        # Update the scrollregion of the canvas whenever the scrollable_frame's size changes
+        # This makes the scrollbar adjust to the content size
+        self.scrollable_frame.bind("<Configure>", lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all")))
+
+        # --- Now, place all original content inside self.scrollable_frame ---
+
+        # --- Header Frame (inside scrollable_frame) ---
+        header_frame = tk.Frame(self.scrollable_frame, bg="#1C1C1C", pady=10) # Even darker gray for header
+        header_frame.pack(fill="x")
+        tk.Label(header_frame, text="💰 Currency Detector 💰", font=("Arial", 24, "bold"), bg="#1C1C1C", fg="white").pack(pady=5)
+
+        # --- Main Content Frame (inside scrollable_frame) ---
+        main_content_frame = tk.Frame(self.scrollable_frame, bg="#2C2C2C", padx=20, pady=20) # Match main window bg
+        main_content_frame.pack(fill="both", expand=True)
+
+        # --- Image Selection and Display Area (inside main_content_frame) ---
+        image_selection_frame = tk.LabelFrame(main_content_frame, text="Image Selection",
+                                              font=("Arial", 14, "bold"), bg="#3A3A3A", fg="#E0E0E0", # Darker gray content frame, light text
+                                              padx=15, pady=15, bd=2, relief="groove")
+        image_selection_frame.pack(pady=10, fill="x")
+
+        # Choose Image Button (inside image_selection_frame)
+        self.choose_image_button = tk.Button(image_selection_frame,
+                                             text="📂 Choose Image",
+                                             command=self._browse_files,
+                                             font=("Arial", 12, "bold"),
+                                             fg="white", # Text color
+                                             cursor="hand2",
+                                             relief="flat", # No native button border
+                                             bd=0,
+                                             bg=image_selection_frame['bg'], # Set background to match parent frame's bg
+                                             activebackground=image_selection_frame['bg']) # Set active background to match parent frame's bg
+        if self.btn_green_img:
+            self.choose_image_button.config(image=self.btn_green_img, compound="center") # Place text on image
+        else:
+            self.choose_image_button.config(bg="#4CAF50") # Fallback color
+        self.choose_image_button.pack(pady=10)
+
+        # Image Display Label (inside image_selection_frame)
+        self.image_label = tk.Label(image_selection_frame, bg="#424242", bd=1, relief="solid") # Slightly lighter dark gray for image area
+        self.image_label.pack(pady=10, padx=10, fill="both", expand=True)
+        # Placeholder image - now dark gray
+        self.placeholder_img = Image.new('RGB', (200, 200), color = '#606060') # Darker grey placeholder
+        self.placeholder_tk = ImageTk.PhotoImage(self.placeholder_img)
+        self.image_label.configure(image=self.placeholder_tk)
+        self.image_label.image = self.placeholder_tk # Keep a reference!
+
+        # Selected File Name Label (inside image_selection_frame)
+        self.selected_file_label = tk.Label(image_selection_frame, text="No image selected", bg="#3A3A3A", # Match content frame bg
+                                            font=("Arial", 10, "italic"), fg="#C0C0C0") # Lighter gray for file name
         self.selected_file_label.pack(pady=5)
 
-        # Prediction Button
-        self.predict_button = tk.Button(self, text="Predict Currency Details", command=self._analyze_file,
-                                        font=("Helvetica", 12, "bold"), bg="#2196F3", fg="white", padx=15, pady=8,
-                                        cursor="hand2")
+        # --- Predict Button (inside main_content_frame) ---
+        self.predict_button = tk.Button(main_content_frame,
+                                        text="🚀 Predict Currency Details",
+                                        command=self._analyze_file,
+                                        font=("Arial", 14, "bold"),
+                                        fg="white", # Text color
+                                        cursor="hand2",
+                                        relief="flat", # No native button border
+                                        bd=0,
+                                        bg=main_content_frame['bg'], # Set background to match parent frame's bg
+                                        activebackground=main_content_frame['bg']) # Set active background to match parent frame's bg
+        if self.btn_dark_green_img: # Use the darker green image
+            self.predict_button.config(image=self.btn_dark_green_img, compound="center")
+        else:
+            self.predict_button.config(bg="#388E3C") # Fallback color
         self.predict_button.pack(pady=20)
 
-        # Result Display Area
-        result_frame = tk.LabelFrame(self, text="Detection Results", font=("Helvetica", 14, "bold"), bg="#f0f2f5",
-                                     fg="#333", padx=15, pady=15)
-        result_frame.pack(pady=10, padx=20, fill="both", expand=True)
+        # --- Result Display Area (inside main_content_frame) ---
+        result_frame = tk.LabelFrame(main_content_frame, text="🔍 Detection Results",
+                                     font=("Arial", 14, "bold"), bg="#3A3A3A", fg="#E0E0E0", # Darker gray content frame, light text
+                                     padx=15, pady=15, bd=2, relief="groove")
+        # Increased height of the result text widget to make it visually larger
+        result_frame.pack(pady=10, fill="both", expand=True)
 
-        # NEW: Frame for Text widget and Scrollbar
-        text_scroll_frame = tk.Frame(result_frame, bg="#f0f2f5")
-        text_scroll_frame.pack(fill="both", expand=True)
-
-        self.results_text_widget = tk.Text(text_scroll_frame, wrap="word", height=8, font=("Helvetica", 11),
-                                           bg="#ffffff", fg="#333", relief="solid", bd=1,
-                                           state="disabled")  # Set to disabled by default
+        self.results_text_widget = tk.Text(result_frame, wrap="word", height=25, width=75, # Increased height to 25
+                                           font=("Consolas", 11),
+                                           bg="#333333", fg="#E0E0E0", relief="flat", bd=0, # Darker background for text, light text
+                                           state="disabled", padx=10, pady=10)
         self.results_text_widget.pack(side="left", fill="both", expand=True)
 
-        self.results_scrollbar = tk.Scrollbar(text_scroll_frame, command=self.results_text_widget.yview)
+        self.results_scrollbar = tk.Scrollbar(result_frame, command=self.results_text_widget.yview, troughcolor="#555555", borderwidth=1) # Darker scrollbar
         self.results_scrollbar.pack(side="right", fill="y")
-
         self.results_text_widget.config(yscrollcommand=self.results_scrollbar.set)
+
+        self.results_text_widget.config(state="normal")
+        self.results_text_widget.insert(tk.END, "Upload an image and click 'Predict' to see the currency details.")
+        self.results_text_widget.config(state="disabled")
 
     def _browse_files(self):
         filepath = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg *.jpeg *.png")])
         if filepath:
             self.selected_filepath = filepath
             img = Image.open(filepath)
-            img.thumbnail((200, 200))
+            img.thumbnail((200, 200), Image.Resampling.LANCZOS)
             tk_image = ImageTk.PhotoImage(img)
             self.image_label.configure(image=tk_image)
             self.image_label.image = tk_image
             self.selected_file_label.config(text=f"Selected: {os.path.basename(filepath)}")
 
-            # Reset results in the Text widget (CORRECTED PART)
-            self.results_text_widget.config(state="normal")  # Enable editing
-            self.results_text_widget.delete(1.0, tk.END)  # Clear content
-            self.results_text_widget.insert(tk.END, "Top Predictions: N/A")
-            self.results_text_widget.config(state="disabled")  # Disable editing
+            self.results_text_widget.config(state="normal")
+            self.results_text_widget.delete(1.0, tk.END)
+            self.results_text_widget.insert(tk.END, "Click 'Predict' to analyze the selected image.")
+            self.results_text_widget.config(state="disabled")
 
     def _analyze_file(self):
         if not self.selected_filepath:
@@ -172,56 +233,79 @@ class FileUploaderApp(tk.Tk):
             return
 
         if self.model is None or not self.class_names:
-            messagebox.showerror("Prediction Error", "Model or class names not loaded.")
+            messagebox.showerror("Prediction Error", "Model or class names not loaded. Please check the console for details.")
             return
+
+        self.results_text_widget.config(state="normal")
+        self.results_text_widget.delete(1.0, tk.END)
+        self.results_text_widget.insert(tk.END, "Analyzing image... Please wait.")
+        self.results_text_widget.config(state="disabled")
+        self.update_idletasks()
 
         input_array = normalize_image(self.selected_filepath)
         if input_array is None:
             return
 
         try:
-            predictions = self.model.predict(input_array)
+            predictions = self.model.predict(input_array, verbose=0)
 
             top_3_indices = np.argsort(predictions[0])[::-1][:3]
-            #
-            # result_text = "Top Predictions:\n"
-            # for idx in top_3_indices:
-            #     label = self.class_names[idx]
-            #     confidence = predictions[0][idx] * 100
-            #     result_text += f"- {label}: {confidence:.2f}%\n"
-            #
-            # self.result_label.config(text=result_text)
 
-            results_text = "Top 3 Predictions:\n"
+            # Define column widths for the text-based table
+            column_widths = {
+                "idx": 3,
+                "country": 15,
+                "value": 15,
+                "year": 15,
+                "confidence": 11 # Adjust for % sign and ".xx"
+            }
+            # Calculate separator width: sum of column widths + (number of columns * 3 for " | ") + 1 for last "|"
+            total_table_width = sum(column_widths.values()) + len(column_widths) * 3 + 1
+            header_separator = "-" * total_table_width
+
+            # Create header row
+            header_row = (f"| {'#':<{column_widths['idx']}} "
+                          f"| {'Country':<{column_widths['country']}} "
+                          f"| {'Value':<{column_widths['value']}} "
+                          f"| {'Year':<{column_widths['year']}} "
+                          f"| {'Confidence':<{column_widths['confidence']}} |")
+
+            results_text = f"{header_separator}\n{header_row}\n{header_separator}\n"
+
             for i, idx in enumerate(top_3_indices):
                 predicted_label = self.class_names[idx]
                 confidence = predictions[0][idx] * 100
 
-                # Parse the predicted label
                 country, value, year_range = parse_currency_label(predicted_label)
 
-                results_text += (f"{i + 1}. Country: {country}\n"
-                                 f"   Value: {value}\n"
-                                 f"   Year: {year_range}\n"
-                                 f"   Confidence: {confidence:.2f}%\n"
-                                 f"   (Label: {predicted_label})\n")
-                if i < 2:  # Add an extra newline between predictions for readability
-                    results_text += "\n"
+                # Prepare values, truncating and adding "..." if too long
+                country_display = (country[:column_widths['country']-3] + "..." if len(country) > column_widths['country'] else country)
+                value_display = (value[:column_widths['value']-3] + "..." if len(value) > column_widths['value'] else value)
+                year_display = (year_range[:column_widths['year']-3] + "..." if len(year_range) > column_widths['year'] else year_range)
+                confidence_display = f"{confidence:.2f}%"
 
-            # Update the UI Text widget with all top 3 results (CORRECTED PART)
-            self.results_text_widget.config(state="normal")  # Enable editing
-            self.results_text_widget.delete(1.0, tk.END)  # Clear content
+                # Create data row
+                results_text += (f"| {i + 1:<{column_widths['idx']}} "
+                                 f"| {country_display:<{column_widths['country']}} "
+                                 f"| {value_display:<{column_widths['value']}} "
+                                 f"| {year_display:<{column_widths['year']}} "
+                                 f"| {confidence_display:<{column_widths['confidence']}} |\n")
+
+            results_text += header_separator + "\n"
+            results_text += "\nNote: Full raw label details are omitted for table clarity."
+
+            self.results_text_widget.config(state="normal")
+            self.results_text_widget.delete(1.0, tk.END)
             self.results_text_widget.insert(tk.END, results_text)
-            self.results_text_widget.config(state="disabled")  # Disable editing
+            self.results_text_widget.config(state="disabled")
 
         except Exception as e:
             messagebox.showerror("Prediction Error", f"An error occurred during prediction:\n{e}")
-            print(f"DEBUG: Prediction Exception: {e}") # Debug print
-            # Update the UI Text widget with error message (CORRECTED PART)
-            self.results_text_widget.config(state="normal")  # Enable editing
-            self.results_text_widget.delete(1.0, tk.END)  # Clear content
+            print(f"DEBUG: Prediction Exception: {e}")
+            self.results_text_widget.config(state="normal")
+            self.results_text_widget.delete(1.0, tk.END)
             self.results_text_widget.insert(tk.END, f"Prediction Error: Could not analyze image.\nDetails: {e}")
-            self.results_text_widget.config(state="disabled")  # Disable editing
+            self.results_text_widget.config(state="disabled")
 
 if __name__ == "__main__":
     app = FileUploaderApp()
