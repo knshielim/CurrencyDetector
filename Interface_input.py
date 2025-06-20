@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 from PIL import Image, ImageTk, ImageDraw
 import numpy as np
 import os
@@ -107,7 +107,7 @@ class FileUploaderApp(tk.Tk):
         main_canvas.pack(side="left", fill="both", expand=True)
 
         # Create a scrollbar for the canvas
-        scrollbar = tk.Scrollbar(self, orient="vertical", command=main_canvas.yview, troughcolor="#555555")
+        scrollbar = tk.Scrollbar(self, orient="vertical", command=main_canvas.yview) # Removed troughcolor
         scrollbar.pack(side="right", fill="y")
 
         # Configure the canvas to use the scrollbar
@@ -118,12 +118,21 @@ class FileUploaderApp(tk.Tk):
         self.scrollable_frame = tk.Frame(main_canvas, bg="#2C2C2C") # Match window bg
 
         # Add the scrollable_frame to a window on the canvas
-        # This is how content is placed inside a canvas for scrolling
-        main_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        # IMPORTANT: Store the ID of the window item on the canvas
+        self.canvas_frame_id = main_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
 
         # Update the scrollregion of the canvas whenever the scrollable_frame's size changes
-        # This makes the scrollbar adjust to the content size
         self.scrollable_frame.bind("<Configure>", lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all")))
+
+        # NEW: Bind to the main_canvas's <Configure> event to resize the internal frame
+        # This makes the content expand horizontally when the canvas (and thus the window) resizes
+        def _on_canvas_resize(event):
+            canvas_width = event.width
+            # Update the width of the window item to match the canvas width
+            main_canvas.itemconfig(self.canvas_frame_id, width=canvas_width)
+
+        main_canvas.bind("<Configure>", _on_canvas_resize)
+
 
         # --- Now, place all original content inside self.scrollable_frame ---
 
@@ -194,22 +203,75 @@ class FileUploaderApp(tk.Tk):
         result_frame = tk.LabelFrame(main_content_frame, text="🔍 Detection Results",
                                      font=("Arial", 14, "bold"), bg="#3A3A3A", fg="#E0E0E0", # Darker gray content frame, light text
                                      padx=15, pady=15, bd=2, relief="groove")
-        # Increased height of the result text widget to make it visually larger
         result_frame.pack(pady=10, fill="both", expand=True)
 
-        self.results_text_widget = tk.Text(result_frame, wrap="word", height=25, width=75, # Increased height to 25
-                                           font=("Consolas", 11),
-                                           bg="#333333", fg="#E0E0E0", relief="flat", bd=0, # Darker background for text, light text
-                                           state="disabled", padx=10, pady=10)
-        self.results_text_widget.pack(side="left", fill="both", expand=True)
+        # --- Use ttk.Treeview for the table ---
+        style = ttk.Style()
+        style.theme_use("clam") # "clam", "alt", "default", "classic"
+        style.configure("Treeview",
+                        background="#333333", # Row background
+                        foreground="#E0E0E0", # Text color
+                        fieldbackground="#333333", # Background of the entire treeview widget
+                        bordercolor="#555555",
+                        lightcolor="#555555",
+                        darkcolor="#2C2C2C",
+                        rowheight=25)
+        style.map("Treeview", background=[('selected', '#4A6984')]) # Selection color
 
-        self.results_scrollbar = tk.Scrollbar(result_frame, command=self.results_text_widget.yview, troughcolor="#555555", borderwidth=1) # Darker scrollbar
-        self.results_scrollbar.pack(side="right", fill="y")
-        self.results_text_widget.config(yscrollcommand=self.results_scrollbar.set)
+        style.configure("Treeview.Heading",
+                        background="#424242", # Header background
+                        foreground="white", # Header text color
+                        font=("Arial", 11, "bold"),
+                        relief="raised",
+                        bordercolor="#555555")
+        style.map("Treeview.Heading", background=[('active', '#555555')])
 
-        self.results_text_widget.config(state="normal")
-        self.results_text_widget.insert(tk.END, "Upload an image and click 'Predict' to see the currency details.")
-        self.results_text_widget.config(state="disabled")
+
+        self.result_tree = ttk.Treeview(result_frame, columns=("Rank", "Country", "Value", "Year", "Confidence"), show="headings")
+        self.result_tree.pack(side="left", fill="both", expand=True)
+
+        # Define column headings and properties
+        self.result_tree.heading("Rank", text="#", anchor="center")
+        self.result_tree.heading("Country", text="Country", anchor="w")
+        self.result_tree.heading("Value", text="Value", anchor="w")
+        self.result_tree.heading("Year", text="Year", anchor="w")
+        self.result_tree.heading("Confidence", text="Confidence", anchor="center")
+
+        self.result_tree.column("Rank", width=40, anchor="center")
+        self.result_tree.column("Country", width=120, anchor="w")
+        self.result_tree.column("Value", width=100, anchor="w")
+        self.result_tree.column("Year", width=90, anchor="w")
+        self.result_tree.column("Confidence", width=100, anchor="center")
+
+        # Scrollbar for the Treeview
+        self.tree_scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=self.result_tree.yview) # REMOVED troughcolor
+        self.tree_scrollbar.pack(side="right", fill="y")
+        self.result_tree.config(yscrollcommand=self.tree_scrollbar.set)
+
+        # Text widget for full label details (below the table)
+        self.full_details_label = tk.Label(result_frame, text="Full Label Details:",
+                                           font=("Arial", 12, "bold"), bg="#3A3A3A", fg="#E0E0E0", anchor="w")
+        self.full_details_label.pack(pady=(10, 0), fill="x")
+
+        self.full_details_text = tk.Text(result_frame, wrap="word", height=8,
+                                         font=("Consolas", 10), bg="#333333", fg="#E0E0E0",
+                                         relief="flat", bd=0, state="disabled", padx=5, pady=5)
+        self.full_details_text.pack(pady=(0, 10), fill="x", expand=False) # Not expanding vertically, only horizontally
+
+        # Initial message for the Treeview and Text widget
+        self._clear_results()
+        self.result_tree.insert("", "end", values=("", "Upload an image and", "click 'Predict'", "to see", "details."))
+
+
+    def _clear_results(self):
+        # Clear previous table data
+        for item in self.result_tree.get_children():
+            self.result_tree.delete(item)
+        # Clear previous full details text
+        self.full_details_text.config(state="normal")
+        self.full_details_text.delete(1.0, tk.END)
+        self.full_details_text.config(state="disabled")
+
 
     def _browse_files(self):
         filepath = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg *.jpeg *.png")])
@@ -222,10 +284,12 @@ class FileUploaderApp(tk.Tk):
             self.image_label.image = tk_image
             self.selected_file_label.config(text=f"Selected: {os.path.basename(filepath)}")
 
-            self.results_text_widget.config(state="normal")
-            self.results_text_widget.delete(1.0, tk.END)
-            self.results_text_widget.insert(tk.END, "Click 'Predict' to analyze the selected image.")
-            self.results_text_widget.config(state="disabled")
+            self._clear_results()
+            self.result_tree.insert("", "end", values=("", "", "Click 'Predict'", "", ""))
+            self.full_details_text.config(state="normal")
+            self.full_details_text.insert(tk.END, "Click 'Predict' to analyze the selected image.")
+            self.full_details_text.config(state="disabled")
+
 
     def _analyze_file(self):
         if not self.selected_filepath:
@@ -236,76 +300,65 @@ class FileUploaderApp(tk.Tk):
             messagebox.showerror("Prediction Error", "Model or class names not loaded. Please check the console for details.")
             return
 
-        self.results_text_widget.config(state="normal")
-        self.results_text_widget.delete(1.0, tk.END)
-        self.results_text_widget.insert(tk.END, "Analyzing image... Please wait.")
-        self.results_text_widget.config(state="disabled")
-        self.update_idletasks()
+        self._clear_results()
+        self.result_tree.insert("", "end", values=("", "", "Analyzing image...", "", ""))
+        self.full_details_text.config(state="normal")
+        self.full_details_text.delete(1.0, tk.END)
+        self.full_details_text.insert(tk.END, "Analyzing image... Please wait.")
+        self.full_details_text.config(state="disabled")
+        self.update_idletasks() # Update GUI to show "Analyzing image..." message
 
         input_array = normalize_image(self.selected_filepath)
         if input_array is None:
+            self.full_details_text.config(state="normal")
+            self.full_details_text.delete(1.0, tk.END)
+            self.full_details_text.insert(tk.END, "Image preprocessing failed.")
+            self.full_details_text.config(state="disabled")
+            self._clear_results()
             return
 
         try:
             predictions = self.model.predict(input_array, verbose=0)
-
             top_3_indices = np.argsort(predictions[0])[::-1][:3]
 
-            # Define column widths for the text-based table
-            column_widths = {
-                "idx": 3,
-                "country": 15,
-                "value": 15,
-                "year": 15,
-                "confidence": 11 # Adjust for % sign and ".xx"
-            }
-            # Calculate separator width: sum of column widths + (number of columns * 3 for " | ") + 1 for last "|"
-            total_table_width = sum(column_widths.values()) + len(column_widths) * 3 + 1
-            header_separator = "-" * total_table_width
+            self._clear_results() # Clear "Analyzing image..." message
 
-            # Create header row
-            header_row = (f"| {'#':<{column_widths['idx']}} "
-                          f"| {'Country':<{column_widths['country']}} "
-                          f"| {'Value':<{column_widths['value']}} "
-                          f"| {'Year':<{column_widths['year']}} "
-                          f"| {'Confidence':<{column_widths['confidence']}} |")
-
-            results_text = f"{header_separator}\n{header_row}\n{header_separator}\n"
+            raw_label_details_list = [] # List to store full raw labels
 
             for i, idx in enumerate(top_3_indices):
-                predicted_label = self.class_names[idx]
+                predicted_label = self.class_names[idx] # This is the full raw label
                 confidence = predictions[0][idx] * 100
 
                 country, value, year_range = parse_currency_label(predicted_label)
 
-                # Prepare values, truncating and adding "..." if too long
-                country_display = (country[:column_widths['country']-3] + "..." if len(country) > column_widths['country'] else country)
-                value_display = (value[:column_widths['value']-3] + "..." if len(value) > column_widths['value'] else value)
-                year_display = (year_range[:column_widths['year']-3] + "..." if len(year_range) > column_widths['year'] else year_range)
-                confidence_display = f"{confidence:.2f}%"
+                # Insert data into the Treeview
+                self.result_tree.insert("", "end", values=(
+                    i + 1,
+                    country,
+                    value,
+                    year_range,
+                    f"{confidence:.2f}%"
+                ))
 
-                # Create data row
-                results_text += (f"| {i + 1:<{column_widths['idx']}} "
-                                 f"| {country_display:<{column_widths['country']}} "
-                                 f"| {value_display:<{column_widths['value']}} "
-                                 f"| {year_display:<{column_widths['year']}} "
-                                 f"| {confidence_display:<{column_widths['confidence']}} |\n")
+                # Add the full raw label to the list
+                raw_label_details_list.append(f"- {predicted_label}")
 
-            results_text += header_separator + "\n"
-            results_text += "\nNote: Full raw label details are omitted for table clarity."
+            # Populate the full details text widget
+            self.full_details_text.config(state="normal")
+            self.full_details_text.insert(tk.END, "\n".join(raw_label_details_list))
+            self.full_details_text.config(state="disabled")
 
-            self.results_text_widget.config(state="normal")
-            self.results_text_widget.delete(1.0, tk.END)
-            self.results_text_widget.insert(tk.END, results_text)
-            self.results_text_widget.config(state="disabled")
 
         except Exception as e:
             messagebox.showerror("Prediction Error", f"An error occurred during prediction:\n{e}")
             print(f"DEBUG: Prediction Exception: {e}")
-            self.results_text_widget.config(state="normal")
-            self.results_text_widget.delete(1.0, tk.END)
-            self.results_text_widget.insert(tk.END, f"Prediction Error: Could not analyze image.\nDetails: {e}")
-            self.results_text_widget.config(state="disabled")
+            self._clear_results() # Clear any pending messages
+            self.result_tree.insert("", "end", values=("", "", "Prediction Failed", "", ""))
+            self.full_details_text.config(state="normal")
+            self.full_details_text.delete(1.0, tk.END)
+            self.full_details_text.insert(tk.END, f"Prediction Error: Could not analyze image.\nDetails: {e}")
+            self.full_details_text.config(state="disabled")
+
 
 if __name__ == "__main__":
     app = FileUploaderApp()
