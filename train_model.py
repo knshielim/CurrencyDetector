@@ -20,6 +20,7 @@ import cv2
 from collections import Counter
 
 # ======================= CONFIGURATION =======================
+# source: Pandelu, A. P. (2024, December 15). Day 48: Training Neural Networks — Hyperparameters, Batch Size, Epochs | by Adithya Prasad Pandelu | Medium. Medium. https://medium.com/@bhatadithya54764118/day-48-training-neural-networks-hyperparameters-batch-size-epochs-712c57d9e30c
 DATASET_DIR = 'dataset'
 IMAGE_SIZE = (128, 128)  # Keep consistent with interface
 BATCH_SIZE = 16  # Reduced for better gradient updates
@@ -38,8 +39,8 @@ print("Starting improved currency classifier training...")
 
 
 # ======================= ENHANCED DATA CLEANUP =======================
+# source: Geeks for Geeks. (2025, April 28). Check If A File is Valid Image with Python - GeeksforGeeks. Geeks for Geeks. https://www.geeksforgeeks.org/python/check-if-a-file-is-valid-image-with-python/
 def clean_dataset():
-    """Remove system files and invalid images with better validation"""
     cleaned_count = 0
     total_files = 0
 
@@ -88,8 +89,8 @@ clean_dataset()
 
 
 # ======================= IMPROVED CLASS COLLECTION =======================
+# source: Hule, V. (2022, January 19). Python Count Number of Files in a Directory [4 Ways] – PYnative. PYnative. https://pynative.com/python-count-number-of-files-in-a-directory/
 def collect_valid_classes():
-    """Collect all valid currency classes with better filtering"""
     class_stats = {}
 
     for folder in os.listdir(DATASET_DIR):
@@ -137,10 +138,8 @@ for cls, count in sorted(class_stats.items(), key=lambda x: x[1], reverse=True)[
 
 
 # ======================= ENHANCED IMAGE PREPROCESSING =======================
+# source: Koul Nimrita. (2023, December 20). Image Processing using OpenCV — Python | by Dr. Nimrita Koul | Medium. Medium. https://medium.com/@nimritakoul01/image-processing-using-opencv-python-9c9b83f4b1ca
 def advanced_preprocess_image(image_path, target_size=IMAGE_SIZE):
-    """
-    Advanced preprocessing with better auto-crop and normalization
-    """
     try:
         # Read image
         img = cv2.imread(image_path)
@@ -211,9 +210,8 @@ def advanced_preprocess_image(image_path, target_size=IMAGE_SIZE):
 
 
 # ======================= BALANCED DATASET CREATION =======================
+# source: Fernandez, H. L. (2025, March 4). Stratified Splitting with train_test_split Using Target and Group Variables — Part 1 | by Hugo López-Fernández | Medium. Medium. https://medium.com/@hlfzeus/stratified-splitting-with-train-test-split-using-target-and-group-variables-part-1-f3dbe5ce84fd
 def create_balanced_dataset():
-    """Create a more balanced dataset with stratified splitting"""
-
     BASE_DIR = 'processed_dataset'
     TRAIN_DIR = os.path.join(BASE_DIR, 'train')
     VAL_DIR = os.path.join(BASE_DIR, 'val')
@@ -297,6 +295,7 @@ def create_balanced_dataset():
 BASE_DIR, class_distribution = create_balanced_dataset()
 
 # ======================= ADVANCED DATA GENERATORS =======================
+# source: Lee, W. M. (2022, October 26). Image Data Augmentation for Deep Learning | Towards Data Science. Towards Data Science. https://towardsdatascience.com/image-data-augmentation-for-deep-learning-77a87fabd2bf/
 # More aggressive augmentation for training
 train_datagen = ImageDataGenerator(
     rescale=1. / 255,
@@ -350,10 +349,8 @@ print(f"Validation samples: {val_generator.samples}")
 
 
 # ======================= IMPROVED MODEL ARCHITECTURE =======================
+# source: Koushik. (2023, November 28). Understanding Convolutional Neural Networks (CNNs) in Depth | by Koushik | Medium. Medium. https://medium.com/@koushikkushal95/understanding-convolutional-neural-networks-cnns-in-depth-d18e299bb438
 def create_advanced_model(num_classes, input_shape=(128, 128, 3)):
-    """
-    Create an advanced CNN model with better architecture for currency classification
-    """
     model = Sequential([
         # Entry block
         Conv2D(32, (3, 3), activation='relu', input_shape=input_shape, padding='same'),
@@ -428,6 +425,7 @@ print("\nModel Architecture:")
 model.summary()
 
 # ======================= ADVANCED CALLBACKS =======================
+# source: Kashyap, P. (2024, October 30). Early Stopping in Deep Learning: A Simple Guide to Prevent Overfitting | by Piyush Kashyap | Medium. Medium. https://medium.com/@piyushkashyap045/early-stopping-in-deep-learning-a-simple-guide-to-prevent-overfitting-1073f56b493e
 callbacks = [
     # Save best model
     ModelCheckpoint(
@@ -460,6 +458,7 @@ callbacks = [
 ]
 
 # ======================= TRAINING WITH CLASS WEIGHTS =======================
+# source: Kamaldeep. (2025, May 1). How to Improve Class Imbalance using Class Weights in ML? Analytics Vidhya. https://www.analyticsvidhya.com/blog/2020/10/improve-class-imbalance-class-weights/
 # Calculate class weights for imbalanced data
 class_counts = []
 for cls in class_names:
@@ -479,6 +478,7 @@ print(f"\nClass weights calculated for {len(class_weights)} classes")
 print("Sample class weights:", {f"class_{k}": f"{v:.2f}" for k, v in list(class_weights.items())[:5]})
 
 # ======================= TRAIN THE MODEL =======================
+# source: Ikegbo, O. S. (2025, May 8). Understanding model.fit() in TensorFlow: A Comprehensive Guide | by Ogochukwu Stanley Ikegbo | May, 2025 | Medium. Medium. https://medium.com/@stacymacbrains/heres-a-medium-style-article-that-explains-the-model-fit-8000b008c5f1
 print("\nStarting advanced model training...")
 
 # Calculate steps
@@ -501,6 +501,7 @@ history = model.fit(
 )
 
 # ======================= SAVE EVERYTHING =======================
+# source: Bais, G. (2025, May 6). How to Save Trained Model in Python. Neptune Blog. https://neptune.ai/blog/saving-trained-model-in-python
 # Load the best model
 try:
     best_model = tf.keras.models.load_model('best_currency_classifier.h5')
@@ -583,4 +584,4 @@ print("✓ class_names.pkl (class labels)")
 print("✓ model_metadata.pkl (comprehensive model info)")
 print("✓ training_history.pkl (training metrics)")
 
-print(f"\nModel is ready for use with Interface_input.py!")
+print(f"\nModel is ready for use with main.py!")
