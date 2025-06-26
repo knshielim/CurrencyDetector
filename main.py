@@ -225,6 +225,8 @@ class FileUploaderApp(tk.Tk):
         self.full_details_text.config(state="disabled")
 
     def _browse_files(self):
+
+        #Source: 1sean0. (2023). Image-Classification-Application. Github Repo. https://github.com/1sean0/Image-Classification-Application
         filepath = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg *.jpeg *.png")])
         if filepath:
             self.selected_filepath = filepath
